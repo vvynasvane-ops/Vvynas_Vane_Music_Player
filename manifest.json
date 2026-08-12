@@ -1,0 +1,16 @@
+{
+  "name": "Vvynas Vane — Music Player",
+  "short_name": "Vvynas Vane",
+  "description": "Your local music library, reborn on the web. Play, sort, and curate the songs on your own device — nothing ever leaves it.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0A0806",
+  "theme_color": "#0A0806",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
