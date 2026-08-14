@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Vvynas Vane — Music Player</title>
+<meta name="description" content="Your local music library, reborn on the web.">
+<meta name="theme-color" content="#0A0806">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Vvynas Vane">
+<link rel="icon" href="favi.jpeg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<canvas id="themeCanvas"></canvas>
+<div id="vignetteOverlay"></div>
+<div id="scanOverlay"></div>
+<canvas id="pixieCanvas"></canvas>
+
+<!-- Storybook page-turn transition (plays on new song / swipe) -->
+<div id="bookTransition">
+  <div class="leaf left"></div>
+  <div class="leaf right"></div>
+</div>
+
+<div id="app">
+
+  <!-- ============ ONBOARDING ============ -->
+  <div class="onboarding" id="onboarding">
+    <div class="onboarding-card">
+      <svg class="sigil-lg" viewBox="0 0 100 100" fill="none">
+        <circle cx="50" cy="50" r="46" stroke="#C9A84C" stroke-width="2.4"/>
+        <circle cx="50" cy="50" r="38" stroke="#8A6E2A" stroke-width="1"/>
+        <polygon points="50,20 71,50 50,80 29,50" fill="#C9A84C"/>
+        <circle cx="50" cy="50" r="9.5" fill="#B22222"/>
+      </svg>
+      <h1>Vvynas Vane</h1>
+      <p>Your library, reborn on the web. Grant access to a music folder on this device and it plays entirely offline, in your browser — nothing is ever uploaded.</p>
+      <button class="btn-primary" id="grantAccessBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg>
+        Grant Access to Your Music
+      </button>
+      <button class="btn-secondary" id="onboardInstallBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 17V3m0 14l-4-4m4 4l4-4M5 21h14"/></svg>
+        Add to Home Screen
+      </button>
+      <div class="fine" id="fsApiNote"></div>
+    </div>
+  </div>
+
+  <!-- ============ MAIN APP ============ -->
+  <div class="app-body hidden" id="appBody">
+
+    <!-- Sidebar (tablet / laptop) -->
+    <nav class="sidebar" id="sidebar">
+      <div class="brand" style="flex-direction:column;align-items:stretch;gap:0;">
+        <canvas id="globeTitleCanvas"></canvas>
+        <span class="ravens-line" id="ravensLine">RAVENS DISPATCHED...</span>
+      </div>
+
+      <ul class="nav-list">
+        <li><button class="nav-item active" data-view="songs">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 18V5l12-2v13M9 18a3 3 0 11-6 0 3 3 0 016 0zm12-2a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+          Library <span class="count" id="navSongsCount"></span>
+        </button></li>
+        <li><button class="nav-item" data-view="playlists">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h10M4 18h10M18 15v6m3-3h-6"/></svg>
+          Playlists <span class="count" id="navPlaylistsCount"></span>
+        </button></li>
+        <li><button class="nav-item" data-view="folders">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+          Folders <span class="count" id="navFoldersCount"></span>
+        </button></li>
+        <li><button class="nav-item" data-view="favorites">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 000-7.8z"/></svg>
+          Favorites <span class="count" id="navFavoritesCount"></span>
+        </button></li>
+      </ul>
+
+      <ul class="nav-list" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--divider);">
+        <li><a class="nav-item" href="video.html" style="text-decoration:none;display:flex;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="15" height="14" rx="2"/><path d="M17 9l5-3v12l-5-3"/></svg>
+          Video Player
+        </a></li>
+        <li><a class="nav-item" href="recap.html" style="text-decoration:none;display:flex;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8M8 16h5M8 8h3"/></svg>
+          Recap
+        </a></li>
+      </ul>
+
+      <div class="sidebar-foot">
+        <div class="storage-pill"><span class="dot"></span><span id="storageLabel">Loading library…</span></div>
+        <button class="sidebar-btn" id="rescanBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4v6h6M20 20v-6h-6M4.5 15a8 8 0 0014.5 3.5M19.5 9A8 8 0 005 5.5"/></svg>
+          Change / rescan folder
+        </button>
+        <button class="sidebar-btn" id="installSidebarBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 17V3m0 14l-4-4m4 4l4-4M5 21h14"/></svg>
+          Add to Home Screen
+        </button>
+        <button class="sidebar-btn" id="settingsBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.9-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1-1.6 1.7 1.7 0 00-1.9.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.9 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1 1.7 1.7 0 00-.3-1.9l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.9.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.9-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.9V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>
+          Themes &amp; Settings
+        </button>
+      </div>
+    </nav>
+
+    <!-- Main column -->
+    <main class="main">
+      <header class="topbar">
+        <h1 id="viewTitle">Library</h1>
+        <div class="search-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input type="text" id="searchInput" placeholder="Search songs, artists, albums…">
+        </div>
+        <select class="sort-select" id="sortSelect">
+          <option value="title">Title A–Z</option>
+          <option value="artist">Artist A–Z</option>
+          <option value="album">Album A–Z</option>
+          <option value="duration">Duration</option>
+          <option value="size">File size</option>
+          <option value="year">Year</option>
+          <option value="dateAdded">Recently added</option>
+          <option value="playCount">Most played</option>
+        </select>
+        <button class="icon-btn" id="shuffleAllBtn" title="Shuffle play all">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h4l9 16h3M4 20h4l3-5.2M17 4h3v3M14 8.5L17 4M17 20v-3l3 0"/></svg>
+        </button>
+      </header>
+
+      <div class="content-scroll" id="contentScroll">
+        <!-- Songs view -->
+        <section id="view-songs"></section>
+        <!-- Playlists view -->
+        <section id="view-playlists" class="hidden"></section>
+        <!-- Playlist detail -->
+        <section id="view-playlist-detail" class="hidden"></section>
+        <!-- Folders view -->
+        <section id="view-folders" class="hidden"></section>
+        <!-- Folder detail -->
+        <section id="view-folder-detail" class="hidden"></section>
+        <!-- Favorites view -->
+        <section id="view-favorites" class="hidden"></section>
+      </div>
+    </main>
+  </div>
+
+  <!-- ============ MINI PLAYER ============ -->
+  <div class="mini-player with-sidebar hidden" id="miniPlayer">
+    <div class="mini-progress"><div class="mini-progress-fill" id="miniProgressFill"></div></div>
+    <div class="art" id="miniArt" style="width:46px;height:46px;border-radius:8px;"></div>
+    <div class="meta">
+      <div class="title" id="miniTitle">—</div>
+      <div class="sub" id="miniArtist">—</div>
+    </div>
+    <div class="controls">
+      <button id="miniPrevBtn" title="Previous"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l10-6v12z"/></svg></button>
+      <button id="miniPlayBtn" class="play-btn" title="Play/Pause"><svg viewBox="0 0 24 24" fill="currentColor" id="miniPlayIcon"><path d="M8 5v14l11-7z"/></svg></button>
+      <button id="miniNextBtn" title="Next"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM4.5 6l10 6-10 6z"/></svg></button>
+    </div>
+  </div>
+
+  <!-- ============ TAB BAR (phone) ============ -->
+  <nav class="tabbar hidden" id="tabbar">
+    <button class="active" data-view="songs">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 18V5l12-2v13M9 18a3 3 0 11-6 0 3 3 0 016 0zm12-2a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      Library
+    </button>
+    <button data-view="playlists">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h10M4 18h10M18 15v6m3-3h-6"/></svg>
+      Playlists
+    </button>
+    <button data-view="folders">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+      Folders
+    </button>
+    <button data-view="favorites">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 000-7.8z"/></svg>
+      Favorites
+    </button>
+    <button data-action="settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9M4.6 15a1.7 1.7 0 01-.3 1.9M12 3v2m0 14v2"/></svg>
+      More
+    </button>
+  </nav>
+
+  <!-- ============ FULL PLAYER ============ -->
+  <div class="player-overlay" id="playerOverlay">
+    <div class="player-top">
+      <button class="chev" id="playerCollapseBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg></button>
+      <span class="label" id="playerSourceLabel">Now Playing</span>
+      <button class="chev" id="playerQueueTopBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h10M4 18h16"/></svg></button>
+    </div>
+    <div class="player-scroll">
+      <div class="player-art-wrap"><div class="art" id="playerArt"></div></div>
+      <div class="player-meta">
+        <div class="title" id="playerTitle">—</div>
+        <div class="artist" id="playerArtist">—</div>
+      </div>
+
+      <div class="player-seek">
+        <div class="seek-track" id="seekTrack">
+          <div class="seek-fill" id="seekFill"></div>
+          <div class="seek-handle" id="seekHandle" style="left:0%"></div>
+        </div>
+        <div class="seek-times"><span id="curTime">0:00</span><span id="totalTime">0:00</span></div>
+      </div>
+
+      <div class="player-controls">
+        <button class="pc-toggle" id="shuffleBtn" title="Shuffle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h4l9 16h3M4 20h4l3-5.2M17 4h3v3M14 8.5L17 4M17 20v-3l3 0"/></svg></button>
+        <button class="pc-skip" id="prevBtn" title="Previous"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l10-6v12z"/></svg></button>
+        <button class="pc-play" id="playBtn" title="Play/Pause"><svg viewBox="0 0 24 24" fill="currentColor" id="playIcon"><path d="M8 5v14l11-7z"/></svg></button>
+        <button class="pc-skip" id="nextBtn" title="Next"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM4.5 6l10 6-10 6z"/></svg></button>
+        <button class="pc-toggle" id="repeatBtn" title="Repeat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 2l4 4-4 4M3 11V9a4 4 0 014-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 01-4 4H3"/></svg></button>
+      </div>
+
+      <div class="player-bottom-row">
+        <button id="favBtn" title="Favorite"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 000-7.8z"/></svg></button>
+        <button id="addToPlaylistBtn" title="Add to playlist"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13M9 8l12-2M9 18a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M21 12v6m3-3h-6" stroke-width="1.8"/></svg></button>
+        <button id="queueBtn" title="Up next"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h9M4 12h9M4 18h9M17 6v12m0 0l-3-3m3 3l3-3"/></svg></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ UP NEXT SHEET ============ -->
+  <div class="sheet-overlay" id="sheetOverlay"></div>
+  <div class="sheet" id="queueSheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-head"><h2>Up Next</h2><button class="icon-btn" id="closeQueueBtn">✕</button></div>
+    <div class="sheet-body" id="queueList"></div>
+  </div>
+
+  <!-- ============ ADD TO PLAYLIST MODAL ============ -->
+  <div class="modal-overlay" id="playlistModalOverlay">
+    <div class="modal">
+      <h3>Add to Playlist</h3>
+      <div id="playlistPickList"></div>
+      <button class="btn-secondary" id="newPlaylistFromModalBtn" style="margin-top:14px;">+ New Playlist</button>
+      <div class="modal-actions"><button class="btn-secondary" id="closePlaylistModalBtn" style="margin-top:0;">Close</button></div>
+    </div>
+  </div>
+
+  <!-- ============ NEW PLAYLIST MODAL ============ -->
+  <div class="modal-overlay" id="newPlaylistModalOverlay">
+    <div class="modal">
+      <h3>New Playlist</h3>
+      <input type="text" id="newPlaylistInput" placeholder="Playlist name" maxlength="60">
+      <div class="modal-actions">
+        <button class="btn-secondary" id="cancelNewPlaylistBtn">Cancel</button>
+        <button class="btn-primary" id="confirmNewPlaylistBtn">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ SETTINGS MODAL ============ -->
+  <div class="modal-overlay" id="settingsModalOverlay">
+    <div class="modal" style="max-width:420px;">
+      <h3>Themes &amp; Settings</h3>
+
+      <div class="theme-row">
+        <span class="lbl">Light mode</span>
+        <button class="switch" id="lightModeSwitch"></button>
+      </div>
+      <div class="theme-row">
+        <span class="lbl">Resume last folder on open</span>
+        <button class="switch on" id="resumeSwitch"></button>
+      </div>
+
+      <div class="section-label" style="margin-top:16px;">Font (8 styles)</div>
+      <div class="font-grid" id="fontGrid"></div>
+
+      <div class="section-label">Animated Background (42 themes)</div>
+      <div class="theme-grid" id="themeGrid"></div>
+
+      <div class="modal-actions">
+        <button class="btn-secondary" id="closeSettingsBtn">Close</button>
+        <button class="btn-primary" id="settingsRescanBtn">Change Folder</button>
+      </div>
+      <div class="modal-actions" style="margin-top:8px;">
+        <a href="video.html" class="btn-secondary" style="margin-top:0;text-decoration:none;text-align:center;">Video Player</a>
+        <a href="recap.html" class="btn-secondary" style="margin-top:0;text-decoration:none;text-align:center;">Recap</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ iOS INSTALL INSTRUCTIONS MODAL ============ -->
+  <div class="modal-overlay" id="iosModalOverlay">
+    <div class="modal">
+      <h3>Add to Home Screen</h3>
+      <ol class="ios-steps">
+        <li><span class="num">1</span>Tap the <strong>Share</strong> icon in Safari's toolbar.</li>
+        <li><span class="num">2</span>Scroll down and tap <strong>Add to Home Screen</strong>.</li>
+        <li><span class="num">3</span>Tap <strong>Add</strong> — Vvynas Vane now opens full-screen like any other app.</li>
+      </ol>
+      <div class="modal-actions"><button class="btn-primary" id="closeIosModalBtn">Got it</button></div>
+    </div>
+  </div>
+
+</div>
+
+<div id="toast"></div>
+
+<input type="file" id="folderFallbackInput" webkitdirectory multiple accept="audio/*" class="hidden">
+
+<script src="shared.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

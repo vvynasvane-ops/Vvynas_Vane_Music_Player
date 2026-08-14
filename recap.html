@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Recap — Vvynas Vane</title>
+<meta name="theme-color" content="#05030D">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="icon" href="icons/icon-192.png">
+<style>
+  /* Recap keeps its own distinct dark-purple starry identity, ported
+     straight from RecapActivity's own palette — separate from the
+     Westeros gold theme used everywhere else in the app. */
+  @import url('https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&display=swap');
+  :root {
+    --rp-bg0: #05030D; --rp-bg1: #0D0820; --rp-bg2: #150F35;
+    --rp-purple: #CC99FF; --rp-purple-dim: rgba(204,153,255,.22);
+    --rp-pink: #FF8FCB; --rp-text: #F0E6FF; --rp-muted: #8C7FB0; --rp-divider: #2A1F4A;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--rp-bg0); color: var(--rp-text); font-family: 'Courier Prime', 'Courier New', monospace; overflow-x: hidden; }
+  canvas#starsCanvas { position: fixed; inset: 0; z-index: 0; }
+  #wrap { position: relative; z-index: 1; min-height: 100%; padding: calc(18px + env(safe-area-inset-top, 0px)) 18px calc(40px + env(safe-area-inset-bottom, 0px)); max-width: 640px; margin: 0 auto; }
+  .top-row { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+  .back-btn { width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--rp-divider); display: flex; align-items: center; justify-content: center; color: var(--rp-text); text-decoration: none; flex: none; }
+  h1 { font-size: 20px; letter-spacing: .06em; margin: 0; color: var(--rp-purple); text-shadow: 0 0 14px rgba(204,153,255,.5); }
+  .subtitle { font-size: 12px; color: var(--rp-muted); margin-top: 2px; }
+
+  .toggle-row { display: flex; gap: 8px; margin: 18px 0; }
+  .toggle-btn { flex: 1; padding: 10px; text-align: center; border-radius: 999px; border: 1px solid var(--rp-divider); font-size: 12.5px; letter-spacing: .08em; cursor: pointer; color: var(--rp-muted); }
+  .toggle-btn.active { background: var(--rp-purple-dim); border-color: var(--rp-purple); color: var(--rp-purple); }
+
+  .month-scroller { display: flex; gap: 8px; overflow-x: auto; padding: 4px 2px 14px; }
+  .month-chip { flex: none; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--rp-divider); font-size: 11.5px; color: var(--rp-muted); cursor: pointer; white-space: nowrap; }
+  .month-chip.active { background: var(--rp-purple-dim); border-color: var(--rp-purple); color: var(--rp-purple); }
+
+  .card { background: rgba(21,15,53,.6); border: 1px solid var(--rp-divider); border-radius: 16px; padding: 18px; margin-bottom: 14px; backdrop-filter: blur(2px); }
+  .card .card-label { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--rp-muted); margin-bottom: 6px; }
+  .stat-row { display: flex; align-items: baseline; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid rgba(255,255,255,.05); }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-row .lbl { font-size: 12.5px; color: var(--rp-muted); }
+  .stat-row .val { font-size: 15px; color: var(--rp-text); font-weight: 700; }
+  .stat-row .val.hi { color: var(--rp-pink); }
+
+  .top-song-card { display: flex; align-items: center; gap: 12px; }
+  .top-song-card .art { width: 52px; height: 52px; border-radius: 10px; background: linear-gradient(145deg, var(--rp-bg2), var(--rp-bg1)); display: flex; align-items: center; justify-content: center; color: var(--rp-purple); flex: none; }
+  .top-song-card .meta .t { font-size: 14px; font-weight: 700; }
+  .top-song-card .meta .a { font-size: 11.5px; color: var(--rp-muted); margin-top: 2px; }
+  .top-song-card .meta .n { font-size: 10.5px; color: var(--rp-pink); margin-top: 4px; }
+
+  .bar-chart { display: flex; align-items: flex-end; gap: 6px; height: 140px; padding-top: 10px; }
+  .bar-chart .bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 6px; }
+  .bar-chart .bar { width: 100%; border-radius: 4px 4px 0 0; background: linear-gradient(180deg, var(--rp-purple), var(--rp-pink)); min-height: 3px; }
+  .bar-chart .bar-label { font-size: 9px; color: var(--rp-muted); }
+
+  .motivation { text-align: center; font-size: 13.5px; color: var(--rp-purple); line-height: 1.6; padding: 20px 10px; font-style: italic; }
+  .empty { text-align: center; padding: 60px 20px; color: var(--rp-muted); font-size: 13px; line-height: 1.6; }
+
+  .download-btn {
+    display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%;
+    background: linear-gradient(180deg, var(--rp-purple), #8855CC); color: #05030D; font-weight: 700; font-size: 13.5px;
+    padding: 14px; border-radius: 999px; border: none; cursor: pointer; margin-top: 6px; letter-spacing: .04em;
+  }
+  .download-btn svg { width: 16px; height: 16px; }
+</style>
+</head>
+<body>
+<canvas id="starsCanvas"></canvas>
+<div id="wrap">
+  <div class="top-row">
+    <a class="back-btn" href="index.html">←</a>
+    <div>
+      <h1>📼 VVYNAS RECAP</h1>
+      <div class="subtitle">Your year in listening</div>
+    </div>
+  </div>
+
+  <div class="toggle-row">
+    <div class="toggle-btn active" data-mode="monthly">MONTHLY</div>
+    <div class="toggle-btn" data-mode="yearly">YEARLY</div>
+  </div>
+
+  <div id="monthScrollerWrap">
+    <div class="month-scroller" id="monthScroller"></div>
+  </div>
+
+  <div id="recapContent"></div>
+
+  <button class="download-btn" id="downloadBtn">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg>
+    Download My Recap
+  </button>
+</div>
+
+<canvas id="posterCanvas" class="hidden" width="1080" height="1080" style="display:none;"></canvas>
+
+<script src="shared.js"></script>
+<script src="recap.js"></script>
+</body>
+</html>
