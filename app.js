@@ -55,7 +55,6 @@ const els = {
   onboarding: $("#onboarding"),
   appBody: $("#appBody"),
   grantAccessBtn: $("#grantAccessBtn"),
-  onboardInstallBtn: $("#onboardInstallBtn"),
   fsApiNote: $("#fsApiNote"),
   sidebar: $("#sidebar"),
   navItems: $$(".nav-item"),
@@ -242,18 +241,73 @@ function updateRavensLine() {
 /* ---------------------------------------------------------------------
    Storage access — File System Access API with graceful fallback
    --------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------
+   Connecting overlay — hourglass + cycling status while we request
+   access and scan the folder. Purely cosmetic, but keeps the person
+   informed that something real is happening in the background.
+   --------------------------------------------------------------------- */
+const connectingEls = {
+  card: document.getElementById("connectingCard"),
+  onboardCard: document.getElementById("onboardingCard"),
+  status: document.getElementById("connectingStatus"),
+  sub: document.getElementById("connectingSub"),
+};
+let connectingCycleTimer = null;
+const CONNECT_FLAVOR = [
+  ["Requesting access…", "Waiting on your permission prompt."],
+  ["Opening the archive…", "This stays on your device."],
+  ["Ravens dispatched…", "Searching every folder and subfolder."],
+];
+function showConnecting(immediateStatus) {
+  els.onboarding.classList.remove("hidden"); // works for first run AND for rescans triggered from inside the app
+  connectingEls.onboardCard.classList.add("hidden");
+  connectingEls.card.classList.remove("hidden");
+  let i = 0;
+  setConnectingStatus(immediateStatus || CONNECT_FLAVOR[0][0], CONNECT_FLAVOR[0][1]);
+  clearInterval(connectingCycleTimer);
+  connectingCycleTimer = setInterval(() => {
+    i = (i + 1) % CONNECT_FLAVOR.length;
+    if (!connectingEls.card._locked) setConnectingStatus(CONNECT_FLAVOR[i][0], CONNECT_FLAVOR[i][1]);
+  }, 1800);
+}
+function setConnectingStatus(status, sub, lock) {
+  connectingEls.status.style.opacity = 0;
+  setTimeout(() => { connectingEls.status.textContent = status; connectingEls.status.style.opacity = 1; }, 120);
+  if (sub !== undefined) connectingEls.sub.textContent = sub;
+  connectingEls.card._locked = !!lock;
+}
+function hideConnecting() {
+  clearInterval(connectingCycleTimer);
+  connectingEls.card.classList.add("hidden");
+  connectingEls.onboardCard.classList.remove("hidden");
+}
+/** Used when a folder request is cancelled/fails — return to wherever the user actually was. */
+function cancelConnecting() {
+  clearInterval(connectingCycleTimer);
+  connectingEls.card.classList.add("hidden");
+  connectingEls.onboardCard.classList.remove("hidden");
+  if (state.songs.length) els.onboarding.classList.add("hidden"); // already had a library — go back to it
+}
+function setStorageBusy(busy) {
+  const dot = document.getElementById("storageDot");
+  if (dot) dot.classList.toggle("busy", busy);
+}
+
 function fsApiSupported() {
   return typeof window.showDirectoryPicker === "function";
 }
 
 async function requestFolderAccess() {
   if (fsApiSupported()) {
+    showConnecting();
     try {
       const handle = await window.showDirectoryPicker({ mode: "read" });
       await idbSet("kv", "dirHandle", handle);
       state.usingFSApi = true;
+      setConnectingStatus("Access granted — scanning…", "Reading your folder structure.");
       await scanDirectoryHandle(handle);
     } catch (err) {
+      cancelConnecting();
       if (err && err.name === "AbortError") return;
       console.error(err);
       toast("Couldn't access that folder. Try again.");
@@ -266,6 +320,7 @@ async function requestFolderAccess() {
 els.folderFallbackInput.addEventListener("change", async (e) => {
   const files = Array.from(e.target.files || []).filter(f => AUDIO_EXT.test(f.name));
   if (!files.length) { toast("No audio files found in that folder."); return; }
+  showConnecting("Reading your folder…", "This stays on your device.");
   state.usingFSApi = false;
   await idbSet("kv", "usedFallback", true);
   await ingestFileList(files);
@@ -284,6 +339,7 @@ async function tryResumeFolder() {
     if (handle) {
       const granted = await verifyPermission(handle, false);
       if (granted) {
+        showConnecting("Welcome back…", "Resuming access to your saved folder.");
         state.usingFSApi = true;
         await scanDirectoryHandle(handle);
         return true;
@@ -304,11 +360,14 @@ function showResumePrompt(handle) {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg>
     Resume Access to Your Music`;
   els.grantAccessBtn.onclick = async () => {
+    showConnecting("Requesting permission…", "One tap to reconnect your folder.");
     const granted = await verifyPermission(handle, true);
     if (granted) {
+      setConnectingStatus("Access granted — scanning…", "Reading your folder structure.");
       state.usingFSApi = true;
       await scanDirectoryHandle(handle);
     } else {
+      cancelConnecting();
       toast("Access wasn't granted.");
     }
   };
@@ -316,7 +375,9 @@ function showResumePrompt(handle) {
 
 /* Recursively walk a FileSystemDirectoryHandle */
 async function scanDirectoryHandle(dirHandle, relPath = "") {
+  setConnectingStatus("Scanning your library…", "Searching every folder and subfolder.", true);
   els.storageLabel.textContent = "Scanning your library…";
+  setStorageBusy(true);
   const found = [];
   async function walk(handle, path) {
     for await (const [name, entry] of handle.entries()) {
@@ -325,6 +386,7 @@ async function scanDirectoryHandle(dirHandle, relPath = "") {
         await walk(entry, p);
       } else if (entry.kind === "file" && AUDIO_EXT.test(name)) {
         found.push({ handle: entry, path: p, folder: path || "Library Root" });
+        if (found.length % 15 === 0) setConnectingStatus(`Found ${found.length} songs so far…`, "Still searching your folders.", true);
       }
     }
   }
@@ -334,6 +396,7 @@ async function scanDirectoryHandle(dirHandle, relPath = "") {
     console.error(err);
     toast("Scan interrupted — some files may be missing.");
   }
+  setConnectingStatus(`Cataloguing ${found.length} song${found.length === 1 ? "" : "s"}…`, "Almost there.", true);
   await buildLibraryFromEntries(found, true);
 }
 
@@ -344,6 +407,7 @@ async function ingestFileList(fileList) {
     parts.pop();
     return { handle: f, path: rel, folder: parts.join("/") || "Library Root" };
   });
+  setConnectingStatus(`Cataloguing ${found.length} song${found.length === 1 ? "" : "s"}…`, "Almost there.", true);
   await buildLibraryFromEntries(found, false);
 }
 
@@ -392,6 +456,7 @@ async function loadMetadataProgressively(entries, isFsApi) {
   let done = 0;
   const CONCURRENCY = 6;
   let idx = 0;
+  setStorageBusy(true);
   async function worker() {
     while (idx < entries.length) {
       const myIdx = idx++;
@@ -418,6 +483,7 @@ async function loadMetadataProgressively(entries, isFsApi) {
   els.storageLabel.textContent = `${state.songs.length} songs found — loading details…`;
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
   els.storageLabel.textContent = `${state.songs.length} song${state.songs.length === 1 ? "" : "s"} in your library`;
+  setStorageBusy(false);
   updateNavCounts();
 }
 
@@ -434,6 +500,7 @@ function loadDuration(file, song) {
 }
 
 function finishOnboarding() {
+  hideConnecting();
   els.onboarding.classList.add("hidden");
   els.appBody.classList.remove("hidden");
   els.miniPlayer.classList.remove("hidden");
@@ -999,10 +1066,9 @@ if ("serviceWorker" in navigator && (location.protocol === "https:" || location.
 /* ---------------------------------------------------------------------
    Event wiring
    --------------------------------------------------------------------- */
-els.grantAccessBtn.addEventListener("click", requestFolderAccess);
+els.grantAccessBtn.onclick = requestFolderAccess; // single handler — showResumePrompt() reassigns this same property, never adds a second listener
 els.rescanBtn.addEventListener("click", requestFolderAccess);
 els.settingsRescanBtn.addEventListener("click", () => { closeSettings(); requestFolderAccess(); });
-els.onboardInstallBtn.addEventListener("click", triggerInstall);
 els.installSidebarBtn.addEventListener("click", triggerInstall);
 
 els.navItems.forEach(btn => btn.addEventListener("click", () => navigateTo(btn.dataset.view)));
@@ -1129,7 +1195,8 @@ window.addEventListener("keydown", (e) => {
 
 window.addEventListener("resize", () => {
   const mobile = window.innerWidth < 900;
-  els.tabbar.classList.toggle("hidden", !mobile || els.onboarding.classList.contains("hidden") === false);
+  const appLoaded = els.appBody && !els.appBody.classList.contains("hidden");
+  els.tabbar.classList.toggle("hidden", !mobile || !appLoaded);
 });
 
 /* ---------------------------------------------------------------------

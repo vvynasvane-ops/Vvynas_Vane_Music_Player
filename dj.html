@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>DJ Mode — Vvynas Vane</title>
+<meta name="theme-color" content="#020408">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+<style>
+  body { overflow-y: auto; overflow-x: hidden; background: #020408; font-family: 'Courier New', ui-monospace, monospace; }
+  #djVisualizer { position: fixed; inset: 0; z-index: 0; }
+  #djScrim { position: fixed; inset: 0; z-index: 1; pointer-events: none; background: linear-gradient(180deg, rgba(2,4,8,.55) 0%, rgba(2,4,8,.25) 30%, rgba(2,4,8,.65) 100%); }
+  #djWrap { position: relative; z-index: 2; max-width: 720px; margin: 0 auto; padding: calc(14px + env(safe-area-inset-top,0px)) 14px calc(60px + env(safe-area-inset-bottom,0px)); }
+
+  .dj-topbar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  .dj-icon-btn { width: 38px; height: 38px; border-radius: 50%; border: 1px solid rgba(255,255,255,.18); display: flex; align-items: center; justify-content: center; color: #fff; text-decoration: none; flex: none; background: rgba(0,0,0,.3); }
+  .dj-icon-btn svg { width: 17px; height: 17px; }
+  .dj-title-block { flex: 1; min-width: 0; }
+  .dj-title-block h1 { font-size: 15px; letter-spacing: .1em; margin: 0; color: #00FFD4; text-shadow: 0 0 12px rgba(0,255,212,.5); }
+  .dj-status { font-size: 10.5px; color: #8ab; letter-spacing: .06em; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .dj-card { background: rgba(10,10,18,.72); border: 1px solid rgba(255,255,255,.12); border-radius: 16px; padding: 16px; margin-bottom: 14px; backdrop-filter: blur(3px); }
+  .dj-decks { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 520px) { .dj-decks { grid-template-columns: 1fr; } }
+
+  .deck-label { font-size: 10.5px; letter-spacing: .16em; color: #666; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+  .deck-label .badge { font-size: 9.5px; color: #FF2D78; }
+  .deck-art-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+  .deck-art { width: 56px; height: 56px; border-radius: 10px; flex: none; overflow: hidden; background: #111; display: flex; align-items: center; justify-content: center; color: #444; }
+  .deck-art img { width: 100%; height: 100%; }
+  .deck-meta { min-width: 0; }
+  .deck-meta .t { font-size: 13px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .deck-meta .a { font-size: 11px; color: #999; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .deck-pitch-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+  .deck-pitch-row span { font-size: 9.5px; color: #666; flex: none; }
+  .deck-pitch-row input[type=range] { flex: 1; accent-color: #00FFD4; }
+  .deck-btn-row { display: flex; gap: 6px; }
+  .deck-btn { flex: 1; padding: 9px 0; border-radius: 8px; border: 1px solid rgba(255,255,255,.15); color: #ccc; font-size: 10.5px; letter-spacing: .04em; display: flex; align-items: center; justify-content: center; gap: 5px; }
+  .deck-btn svg { width: 13px; height: 13px; }
+  .deck-btn.play { background: linear-gradient(180deg, #00FFD4, #00A8AA); color: #001a18; border: none; font-weight: 700; }
+  .deck-btn.play.playing { background: linear-gradient(180deg, #FF2D78, #B2004E); color: #fff; }
+
+  .mixer-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 16px; }
+  .mixer-labels { display: flex; justify-content: space-between; font-size: 10px; letter-spacing: .08em; color: #789; }
+  .mixer-row input[type=range] { width: 100%; accent-color: #7B2FFF; }
+  #crossfader { accent-color: #00FFD4; }
+  .bass-label-row { display: flex; justify-content: space-between; align-items: center; }
+  #bassLabel { color: #FF6B00; font-weight: 700; font-size: 13px; }
+
+  .dj-action-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 4px; }
+  .dj-action-btn { padding: 12px 4px; border-radius: 10px; border: none; font-size: 10.5px; letter-spacing: .05em; font-weight: 700; color: #001a18; background: #00FFD4; text-align: center; }
+  .dj-action-btn.beat { background: #7B2FFF; color: #fff; }
+  .dj-action-btn.shout { background: rgba(255,255,255,.1); color: #fff; border: 1px solid rgba(255,255,255,.2); }
+  .dj-action-btn.on.automix { background: #39FF14; color: #001a00; }
+  .dj-action-btn.on.beat { background: #FF2D78; color: #fff; }
+
+  .queue-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .queue-head .lbl { font-size: 11px; letter-spacing: .1em; color: #789; }
+  .queue-add-btn { width: 30px; height: 30px; border-radius: 50%; background: rgba(0,255,212,.15); border: 1px solid #00FFD4; color: #00FFD4; display: flex; align-items: center; justify-content: center; }
+  .queue-list { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
+  .queue-row { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 8px; background: rgba(255,255,255,.03); cursor: pointer; }
+  .queue-row:hover { background: rgba(255,255,255,.07); }
+  .queue-row .t { flex: 1; font-size: 12px; color: #ddd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .queue-row .a { font-size: 10.5px; color: #777; flex: none; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .queue-row .rm { color: #666; padding: 2px 6px; flex: none; }
+  .queue-empty { font-size: 12px; color: #666; text-align: center; padding: 18px 0; }
+
+  #shoutoutText {
+    position: fixed; top: 18%; left: 50%; transform: translate(-50%, -10px); z-index: 30;
+    font-size: 15px; font-weight: 700; letter-spacing: .04em; color: #fff; text-align: center;
+    text-shadow: 0 0 16px rgba(0,255,212,.8), 0 2px 8px rgba(0,0,0,.8);
+    background: rgba(0,0,0,.4); padding: 10px 22px; border-radius: 999px; border: 1px solid rgba(0,255,212,.4);
+    opacity: 0; transition: opacity .3s, transform .3s; pointer-events: none; max-width: 88vw;
+  }
+  #shoutoutText.show { opacity: 1; transform: translate(-50%, 0); }
+
+  .dj-grant { position: relative; z-index: 2; padding: 80px 24px; text-align: center; }
+  .dj-grant p { color: #99a; font-size: 14px; max-width: 340px; margin: 12px auto 22px; line-height: 1.5; }
+  .dj-grant .uib-orbit { margin: 0 auto 18px; }
+
+  /* Song picker + settings modal (reuse app modal look, DJ-tinted) */
+  .dj-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 60; display: flex; align-items: center; justify-content: center; padding: 20px; opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .dj-modal-overlay.open { opacity: 1; pointer-events: auto; }
+  .dj-modal { background: #0A0A12; border: 1px solid rgba(255,255,255,.15); border-radius: 14px; width: 100%; max-width: 400px; padding: 18px; max-height: 78vh; overflow-y: auto; }
+  .dj-modal h3 { font-size: 14px; letter-spacing: .08em; color: #00FFD4; margin: 0 0 12px; }
+  .dj-modal input[type=text] { width: 100%; background: #16161f; border: 1px solid rgba(255,255,255,.15); color: #fff; border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-bottom: 10px; }
+  .dj-modal-row { display: flex; align-items: center; gap: 10px; padding: 9px 6px; border-radius: 8px; cursor: pointer; font-size: 12.5px; color: #ddd; }
+  .dj-modal-row:hover { background: rgba(255,255,255,.06); }
+  .dj-modal-row .a { color: #888; font-size: 11px; margin-left: auto; }
+  .dj-modal-close { width: 100%; margin-top: 10px; padding: 10px; border-radius: 8px; background: rgba(255,255,255,.08); color: #ccc; border: none; font-size: 12.5px; }
+  .dj-about-text { font-size: 12px; color: #bbb; line-height: 1.9; white-space: pre-line; }
+</style>
+</head>
+<body>
+
+<canvas id="djVisualizer"></canvas>
+<div id="djScrim"></div>
+
+<div id="djWrap">
+  <div class="dj-topbar">
+    <a class="dj-icon-btn" href="index.html" title="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></a>
+    <div class="dj-title-block">
+      <h1>⚔ DJ MODE</h1>
+      <div class="dj-status" id="djStatus">Loading library…</div>
+    </div>
+    <button class="dj-icon-btn" id="djVisualBtn" title="Cycle visual theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2m10-10h-2M4 12H2m15.5-7.5l-1.4 1.4M7.9 16.1l-1.4 1.4m0-11l1.4 1.4m9.2 9.2l1.4 1.4"/></svg></button>
+    <button class="dj-icon-btn" id="djSettingsBtn" title="DJ Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.9-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1-1.6 1.7 1.7 0 00-1.9.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.9 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1 1.7 1.7 0 00-.3-1.9l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.9.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.9-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.9V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg></button>
+  </div>
+
+  <div id="djGrant" class="dj-grant">
+    <div class="uib-orbit" aria-hidden="true">
+      <div class="uib-particle"></div><div class="uib-particle"></div><div class="uib-particle"></div><div class="uib-particle"></div>
+      <div class="uib-particle"></div><div class="uib-particle"></div><div class="uib-particle"></div><div class="uib-particle"></div>
+      <div class="uib-particle"></div><div class="uib-particle"></div><div class="uib-particle"></div><div class="uib-particle"></div><div class="uib-particle"></div>
+    </div>
+    <p>DJ Mode needs access to your music folder to load onto the decks. Uses the same on-device access as your library — nothing is uploaded.</p>
+    <button class="btn-primary" id="djGrantBtn" style="max-width:280px;margin:0 auto;">Grant Access &amp; Enter DJ Mode</button>
+  </div>
+
+  <div id="djApp" class="hidden">
+    <div class="dj-card">
+      <div class="dj-decks">
+        <div class="deck" data-deck="A">
+          <div class="deck-label">⚔ DECK A <span class="badge" id="deckACount"></span></div>
+          <div class="deck-art-row">
+            <div class="deck-art" id="deckAArt"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 18V5l12-2v13M9 18a3 3 0 11-6 0 3 3 0 016 0zm12-2a3 3 0 11-6 0 3 3 0 016 0z"/></svg></div>
+            <div class="deck-meta"><div class="t" id="deckATitle">No track loaded</div><div class="a" id="deckAArtist">Tap select</div></div>
+          </div>
+          <div class="deck-pitch-row"><span>PITCH</span><input type="range" id="deckAPitch" min="0" max="100" value="50"></div>
+          <div class="deck-btn-row">
+            <button class="deck-btn" id="deckASelect">SELECT</button>
+            <button class="deck-btn play" id="deckAPlay">▶ PLAY</button>
+            <button class="deck-btn" id="deckACue">CUE</button>
+          </div>
+        </div>
+        <div class="deck" data-deck="B">
+          <div class="deck-label">◈ DECK B <span class="badge" id="deckBCount"></span></div>
+          <div class="deck-art-row">
+            <div class="deck-art" id="deckBArt"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 18V5l12-2v13M9 18a3 3 0 11-6 0 3 3 0 016 0zm12-2a3 3 0 11-6 0 3 3 0 016 0z"/></svg></div>
+            <div class="deck-meta"><div class="t" id="deckBTitle">No track loaded</div><div class="a" id="deckBArtist">Tap select</div></div>
+          </div>
+          <div class="deck-pitch-row"><span>PITCH</span><input type="range" id="deckBPitch" min="0" max="100" value="50"></div>
+          <div class="deck-btn-row">
+            <button class="deck-btn" id="deckBSelect">SELECT</button>
+            <button class="deck-btn play" id="deckBPlay">▶ PLAY</button>
+            <button class="deck-btn" id="deckBCue">CUE</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="dj-card">
+      <div class="mixer-row">
+        <div class="mixer-labels"><span>A</span><span>CROSSFADER</span><span>B</span></div>
+        <input type="range" id="crossfader" min="0" max="100" value="50">
+      </div>
+      <div class="mixer-row">
+        <div class="bass-label-row"><span class="mixer-labels" style="display:inline;color:#789;">808 / BASS BOOST</span><span id="bassLabel">50</span></div>
+        <input type="range" id="bassSlider" min="0" max="100" value="50">
+      </div>
+      <div class="dj-action-row">
+        <button class="dj-action-btn automix" id="btnAutoMix">AUTO MIX</button>
+        <button class="dj-action-btn beat" id="btnBeatSync">BEAT SYNC</button>
+        <button class="dj-action-btn shout" id="btnShoutout">🎤 SHOUT</button>
+      </div>
+    </div>
+
+    <div class="dj-card">
+      <div class="queue-head">
+        <span class="lbl">⚔ BATTLE QUEUE</span>
+        <button class="queue-add-btn" id="djAddQueueBtn" title="Add to queue"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+      </div>
+      <div class="queue-list" id="queueList"><div class="queue-empty">Queue is empty — add tracks to auto-load when a deck finishes.</div></div>
+    </div>
+  </div>
+</div>
+
+<div id="shoutoutText"></div>
+
+<!-- Song picker (load deck / add to queue) -->
+<div class="dj-modal-overlay" id="pickerOverlay">
+  <div class="dj-modal">
+    <h3 id="pickerTitle">Select Track</h3>
+    <input type="text" id="pickerSearch" placeholder="Search songs…">
+    <div id="pickerList"></div>
+    <button class="dj-modal-close" id="pickerCloseBtn">CLOSE</button>
+  </div>
+</div>
+
+<!-- DJ Settings -->
+<div class="dj-modal-overlay" id="djSettingsOverlay">
+  <div class="dj-modal">
+    <h3>⚔ CASTLE BLACK — DJ CONFIG</h3>
+    <div class="dj-modal-row" id="optVisualTheme">⚔ VISUAL THEME <span class="a" id="visualThemeName">DRAGONFIRE</span></div>
+    <div class="dj-modal-row" id="optCrossfade">⚔ CROSSFADE DURATION <span class="a" id="crossfadeDurLabel">6s</span></div>
+    <div class="dj-modal-row" id="optBassPreset">⚔ BASS BOOST PRESET</div>
+    <div class="dj-modal-row" id="optResetCounts">⚔ RESET ALL PLAY COUNTS</div>
+    <div class="dj-modal-row" id="optClearQueue">⚔ CLEAR DJ QUEUE</div>
+    <div class="dj-modal-row" id="optAbout">⚔ ABOUT DJ MODE</div>
+    <button class="dj-modal-close" id="djSettingsCloseBtn">CLOSE</button>
+  </div>
+</div>
+
+<div class="dj-modal-overlay" id="aboutOverlay">
+  <div class="dj-modal">
+    <h3>⚔ DJ MODE</h3>
+    <div class="dj-about-text">VVYNAS VANE IRON THRONE v1.0
+
+DUAL DECK WAR ENGINE
+CROSSFADER — constant power pan
+808 BASS — Web Audio low-shelf boost
+AUTO MIX — automatic crossfade
+BEAT SYNC — visualizer pulse
+SHOUTOUTS — triggered at play milestones
+4 VISUAL THEMES — cycle with palette icon
+
+TAP A QUEUED TRACK TO LOAD IT ON THE NEXT IDLE DECK. USE × TO REMOVE.</div>
+    <button class="dj-modal-close" id="aboutCloseBtn">LET'S GO</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="shared.js"></script>
+<script src="dj.js"></script>
+</body>
+</html>

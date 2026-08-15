@@ -59,6 +59,29 @@
   .motivation { text-align: center; font-size: 13.5px; color: var(--rp-purple); line-height: 1.6; padding: 20px 10px; font-style: italic; }
   .empty { text-align: center; padding: 60px 20px; color: var(--rp-muted); font-size: 13px; line-height: 1.6; }
 
+  /* Loader 4 (jelly dot stream), recolored purple for the Recap identity */
+  .loading-state { display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 70px 20px; }
+  .uib-dots-recap {
+    --uib-size: 40px; --uib-color: var(--rp-purple); --uib-speed: 1.8s; --uib-dot-size: calc(var(--uib-size) * 0.23);
+    position: relative; display: flex; align-items: center; justify-content: space-between;
+    width: var(--uib-size); height: var(--uib-dot-size); filter: url('#uib-jelly-ooze-recap');
+  }
+  .uib-dots-recap .dot {
+    position: absolute; top: calc(50% - var(--uib-dot-size) / 2); left: calc(0px - var(--uib-dot-size) / 2);
+    display: block; height: var(--uib-dot-size); width: var(--uib-dot-size); border-radius: 50%;
+    background-color: var(--uib-color); animation: uibStreamRecap var(--uib-speed) linear infinite both;
+  }
+  .uib-dots-recap .dot:nth-child(2) { animation-delay: calc(var(--uib-speed) * -0.2); }
+  .uib-dots-recap .dot:nth-child(3) { animation-delay: calc(var(--uib-speed) * -0.4); }
+  .uib-dots-recap .dot:nth-child(4) { animation-delay: calc(var(--uib-speed) * -0.6); }
+  .uib-dots-recap .dot:nth-child(5) { animation-delay: calc(var(--uib-speed) * -0.8); }
+  @keyframes uibStreamRecap {
+    0%, 100% { transform: translateX(0) scale(0); }
+    50% { transform: translateX(calc(var(--uib-size) * 0.5)) scale(1); }
+    99.999% { transform: translateX(var(--uib-size)) scale(0); }
+  }
+  .loading-label { font-size: 12px; color: var(--rp-muted); letter-spacing: .04em; }
+
   .download-btn {
     display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%;
     background: linear-gradient(180deg, var(--rp-purple), #8855CC); color: #05030D; font-weight: 700; font-size: 13.5px;
@@ -87,7 +110,14 @@
     <div class="month-scroller" id="monthScroller"></div>
   </div>
 
-  <div id="recapContent"></div>
+  <div id="recapContent">
+    <div class="loading-state" id="recapLoading">
+      <div class="uib-dots-recap" aria-hidden="true">
+        <div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div>
+      </div>
+      <div class="loading-label">Reading your listening history…</div>
+    </div>
+  </div>
 
   <button class="download-btn" id="downloadBtn">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg>
@@ -96,6 +126,16 @@
 </div>
 
 <canvas id="posterCanvas" class="hidden" width="1080" height="1080" style="display:none;"></canvas>
+
+<svg width="0" height="0" style="position:absolute;">
+  <defs>
+    <filter id="uib-jelly-ooze-recap">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"/>
+      <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 18 -7" result="ooze"/>
+      <feBlend in="SourceGraphic" in2="ooze"/>
+    </filter>
+  </defs>
+</svg>
 
 <script src="shared.js"></script>
 <script src="recap.js"></script>

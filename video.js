@@ -16,6 +16,7 @@ const state = { videos: [], m4as: [], fileRefs: new Map(), queue: [], queueIndex
 const $ = (s) => document.querySelector(s);
 const els = {
   grantSection: $("#grantSection"), grantBtn: $("#grantBtn"), playerSection: $("#playerSection"),
+  scanningSection: $("#scanningSection"), scanningStatus: $("#scanningStatus"),
   vpStage: $("#vpStage"), vpEmptyStage: $("#vpEmptyStage"), video: $("#vpVideo"),
   title: $("#vpTitle"), sub: $("#vpSub"),
   prevBtn: $("#vpPrevBtn"), playBtn: $("#vpPlayBtn"), playIcon: $("#vpPlayIcon"), nextBtn: $("#vpNextBtn"),
@@ -45,19 +46,28 @@ async function requestAccess() {
     els.folderFallback.click();
   }
 }
-els.grantBtn.addEventListener("click", requestAccess);
+els.grantBtn.onclick = requestAccess; // single handler — reassigned on resume, never a second listener
 
 els.folderFallback.addEventListener("change", async (e) => {
   const files = Array.from(e.target.files || []).filter(f => ALL_EXT.test(f.name));
   if (!files.length) { toast("No video or M4A files found."); return; }
   state.usingFSApi = false;
+  showScanning("Reading your folder…");
   const entries = files.map(f => ({ handle: f, path: f.webkitRelativePath || f.name }));
   buildLists(entries);
 });
 
+function showScanning(status) {
+  els.grantSection.classList.add("hidden");
+  els.playerSection.classList.add("hidden");
+  els.scanningSection.classList.remove("hidden");
+  if (status) els.scanningStatus.textContent = status;
+}
+
 async function scanHandle(handle) {
-  toast("Scanning for video & M4A files…");
-  const entries = await walkDirectory(handle, ALL_EXT).catch(() => []);
+  showScanning("Searching your folder…");
+  const entries = await walkDirectory(handle, ALL_EXT, (n) => { if (n % 15 === 0) els.scanningStatus.textContent = `Found ${n} files so far…`; }).catch(() => []);
+  els.scanningStatus.textContent = `Cataloguing ${entries.length} file${entries.length === 1 ? "" : "s"}…`;
   buildLists(entries);
 }
 
@@ -71,6 +81,7 @@ function buildLists(entries) {
     if (M4A_EXT.test(name)) state.m4as.push(item); else state.videos.push(item);
   });
   els.grantSection.classList.add("hidden");
+  els.scanningSection.classList.add("hidden");
   els.playerSection.classList.remove("hidden");
   render();
 }
@@ -153,7 +164,11 @@ async function boot() {
     const granted = await verifyPermission(handle, false);
     if (granted) { state.usingFSApi = true; await scanHandle(handle); return; }
     els.grantBtn.textContent = "Resume Access to Videos";
-    els.grantBtn.onclick = async () => { const ok = await verifyPermission(handle, true); if (ok) { state.usingFSApi = true; await scanHandle(handle); } else toast("Access wasn't granted."); };
+    els.grantBtn.onclick = async () => {
+      const ok = await verifyPermission(handle, true);
+      if (ok) { state.usingFSApi = true; await scanHandle(handle); }
+      else toast("Access wasn't granted.");
+    };
   }
 }
 boot();

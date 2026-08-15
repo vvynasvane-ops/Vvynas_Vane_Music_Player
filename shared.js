@@ -11,7 +11,7 @@
    IndexedDB — shared store across every page
    --------------------------------------------------------------------- */
 const DB_NAME = "vvynas-vane-db";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 let dbPromise = null;
 function openDB() {
   if (dbPromise) return dbPromise;
@@ -24,6 +24,7 @@ function openDB() {
       if (!db.objectStoreNames.contains("favorites")) db.createObjectStore("favorites");
       if (!db.objectStoreNames.contains("playCounts")) db.createObjectStore("playCounts");
       if (!db.objectStoreNames.contains("monthStats")) db.createObjectStore("monthStats");
+      if (!db.objectStoreNames.contains("djPlayCounts")) db.createObjectStore("djPlayCounts");
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -53,6 +54,41 @@ async function idbGetAllKeys(store) {
 async function idbPut(store, obj) {
   const db = await openDB();
   return new Promise((res, rej) => { const tx = db.transaction(store, "readwrite"); tx.objectStore(store).put(obj); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); });
+}
+
+/* ---------------------------------------------------------------------
+   Generated sigil album art — shared so every page (library, DJ decks)
+   renders the same deterministic art for the same song.
+   --------------------------------------------------------------------- */
+const SIGIL_PALETTES = [
+  ["#C9A84C", "#8A6E2A", "#1A1410"], ["#B22222", "#6b1414", "#1A1410"], ["#8B9CA8", "#3f4c55", "#110E0B"],
+  ["#4A7C59", "#274430", "#110E0B"], ["#2E4A6A", "#182838", "#0A0806"], ["#CC5500", "#7a3300", "#1A1410"],
+];
+const artCache = new Map();
+function hashStr(str) { let h = 0; for (let i = 0; i < str.length; i++) { h = (h << 5) - h + str.charCodeAt(i); h |= 0; } return "s" + Math.abs(h).toString(36) + str.length.toString(36); }
+function generatedArt(seedStr, size = 200) {
+  const key = seedStr + "@" + size;
+  if (artCache.has(key)) return artCache.get(key);
+  const canvas = document.createElement("canvas"); canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  const h = Math.abs(hashStr(seedStr).split("").reduce((a, c) => a + c.charCodeAt(0), 0));
+  const pal = SIGIL_PALETTES[h % SIGIL_PALETTES.length];
+  const grad = ctx.createRadialGradient(size * .5, size * .4, size * .05, size * .5, size * .5, size * .75);
+  grad.addColorStop(0, pal[1]); grad.addColorStop(1, pal[2]);
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = pal[0]; ctx.lineWidth = size * .02;
+  ctx.beginPath(); ctx.arc(size / 2, size / 2, size * .4, 0, Math.PI * 2); ctx.stroke();
+  const rot = (h % 8) * (Math.PI / 16);
+  ctx.save(); ctx.translate(size / 2, size / 2); ctx.rotate(rot); ctx.fillStyle = pal[0];
+  const r2 = size * .24;
+  ctx.beginPath(); ctx.moveTo(0, -r2); ctx.lineTo(r2 * .62, 0); ctx.lineTo(0, r2); ctx.lineTo(-r2 * .62, 0); ctx.closePath(); ctx.fill();
+  ctx.restore();
+  const letter = (seedStr.trim()[0] || "V").toUpperCase();
+  ctx.fillStyle = pal[2]; ctx.font = `700 ${size * .16}px Cinzel, Georgia, serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(letter, size / 2, size / 2 + size * .01);
+  const url = canvas.toDataURL("image/png");
+  artCache.set(key, url);
+  return url;
 }
 
 /* ---------------------------------------------------------------------
@@ -1043,6 +1079,7 @@ global.VV = {
   fsApiSupported, verifyPermission, pickDirectory, getStoredHandle, walkDirectory,
   ThemeEngine, PixieDust, BookTransition, GlobeTitle,
   C, linGrad, radGrad, fillGrad,
+  generatedArt, hashStr,
 };
 
 })(window);
