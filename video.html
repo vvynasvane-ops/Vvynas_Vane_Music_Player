@@ -4,11 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
 <title>Video Player — Vvynas Vane</title>
-<meta name="theme-color" content="#0A0806">
+<meta name="theme-color" content="#000000">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="icon" href="favi.jpeg">
+<link rel="icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="style.css">
 <style>
   /* Deliberately plain: no animated backdrop, no page-turn, no sparkle.
@@ -39,6 +39,16 @@
     color: var(--text-muted); margin: 18px 18px 8px; display: flex; align-items: center; gap: 8px;
   }
   .vp-section-label::after { content: ""; flex: 1; height: 1px; background: var(--divider); }
+  .vp-search-wrap {
+    display: flex; align-items: center; gap: 8px; margin: 4px 18px 0;
+    background: var(--bg-card); border: 1px solid var(--divider); border-radius: 999px; padding: 9px 14px;
+  }
+  .vp-search-wrap svg { width: 15px; height: 15px; color: var(--text-muted); flex: none; }
+  .vp-search-wrap input { border: none; background: none; outline: none; color: var(--text-primary); font-size: 13.5px; width: 100%; font-family: inherit; }
+  .vp-search-wrap input::placeholder { color: var(--text-muted); }
+  .vp-search-wrap .vp-clear { display: none; color: var(--text-muted); flex: none; padding: 2px; }
+  .vp-search-wrap.has-text .vp-clear { display: flex; }
+  .vp-no-results { padding: 30px 16px; text-align: center; color: var(--text-muted); font-size: 13px; }
   .vp-list { padding: 0 10px 40px; }
   .vp-row {
     display: flex; align-items: center; gap: 12px; padding: 10px 8px; border-radius: var(--radius-s); cursor: pointer;
@@ -54,6 +64,30 @@
   .vp-row .kind { font-size: 10.5px; color: var(--text-muted); border: 1px solid var(--divider); border-radius: 999px; padding: 2px 8px; flex: none; }
   .vp-grant { padding: 60px 24px; text-align: center; }
   .vp-grant p { color: var(--text-secondary); font-size: 14px; max-width: 340px; margin: 10px auto 20px; line-height: 1.5; }
+
+  /* Codec / playback warning banner — shown when a video track can't be
+     decoded (classic "MKV plays audio only" symptom) so it's explained
+     instead of leaving a confusing blank frame. */
+  .vp-warning {
+    display: flex; align-items: flex-start; gap: 10px; margin: 10px 18px 0; padding: 11px 13px;
+    background: rgba(178,34,34,0.12); border: 1px solid rgba(178,34,34,0.4); border-radius: var(--radius-s);
+    color: var(--text-primary); font-size: 12px; line-height: 1.5;
+  }
+  .vp-warning svg { width: 16px; height: 16px; flex: none; margin-top: 1px; color: var(--accent2); }
+  .vp-warning strong { color: var(--accent2); }
+
+  /* Subtitle (CC) picker */
+  .cc-btn.active-cc { color: var(--accent); }
+  .cc-modal { background: var(--bg-card); border: 1px solid var(--divider); border-radius: var(--radius-m); width: 100%; max-width: 360px; padding: 18px; }
+  .cc-modal h3 { font-family: var(--font-display); font-size: 15px; color: var(--accent); margin: 0 0 12px; }
+  .cc-row { display: flex; align-items: center; gap: 10px; padding: 10px 8px; border-radius: var(--radius-s); cursor: pointer; font-size: 13px; color: var(--text-secondary); }
+  .cc-row:hover { background: var(--ripple); }
+  .cc-row.active { color: var(--accent); background: var(--accent-dim); }
+  .cc-row svg { width: 15px; height: 15px; flex: none; }
+  .cc-row .src-tag { margin-left: auto; font-size: 10px; color: var(--text-muted); }
+
+  /* Native <video> track cue styling, so subtitles read clearly over any footage */
+  video::cue { background: rgba(0,0,0,.7); color: #fff; font-size: 1.05em; padding: 2px 6px; }
 </style>
 </head>
 <body>
@@ -61,6 +95,8 @@
 <header class="vp-topbar">
   <button class="icon-btn" id="backBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></button>
   <h1>Video Player</h1>
+  <button class="icon-btn cc-btn" id="ccBtn" title="Subtitles (press V)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M7 11.5h2M7 14h4M15 11.5h2M15 14h2"/></svg></button>
+  <button class="icon-btn hidden" id="audBtn" title="Audio language"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 010 7"/></svg></button>
   <button class="icon-btn" id="fullscreenBtn" title="Fullscreen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg></button>
 </header>
 
@@ -83,6 +119,10 @@
     <div class="vp-empty-stage" id="vpEmptyStage">Select a file below to play</div>
     <video id="vpVideo" class="hidden" playsinline controls-list="nodownload"></video>
   </div>
+  <div id="vpWarning" class="vp-warning hidden">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4m0 4h.01M10.29 3.86l-8.18 14.18A2 2 0 003.82 21h16.36a2 2 0 001.71-2.96L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+    <span id="vpWarningText"></span>
+  </div>
   <div class="vp-meta">
     <div class="title" id="vpTitle">Nothing playing</div>
     <div class="sub" id="vpSub">&nbsp;</div>
@@ -98,6 +138,12 @@
     <span id="vpTotal">0:00</span>
   </div>
 
+  <div class="vp-search-wrap" id="vpSearchWrap">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+    <input type="text" id="vpSearchInput" placeholder="Search video &amp; M4A files…">
+    <button class="vp-clear" id="vpSearchClear" title="Clear search"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  </div>
+
   <div class="vp-section-label" id="videoLabel">Video Files</div>
   <div class="vp-list" id="videoList"></div>
   <div class="vp-section-label" id="m4aLabel">M4A Files</div>
@@ -105,6 +151,31 @@
 </div>
 
 <input type="file" id="vpFolderFallback" webkitdirectory multiple class="hidden">
+<input type="file" id="vpSubtitleFile" accept=".srt,.vtt,.txt" class="hidden">
+
+<!-- Subtitle (CC) picker -->
+<div class="modal-overlay" id="ccModalOverlay">
+  <div class="cc-modal">
+    <h3>Subtitles</h3>
+    <div id="ccList"></div>
+    <div class="cc-row" id="ccLoadFileRow">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg>
+      Load Subtitle File (.srt / .vtt)…
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:10px;text-align:center;">Tip: press <strong>V</strong> anytime to cycle subtitle languages.</div>
+    <button class="btn-secondary" id="ccCloseBtn" style="margin-top:10px;">Close</button>
+  </div>
+</div>
+
+<!-- Audio language picker -->
+<div class="modal-overlay" id="audModalOverlay">
+  <div class="cc-modal">
+    <h3>Audio Language</h3>
+    <div id="audList"></div>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:10px;text-align:center;">English is preferred automatically when more than one audio track is found.</div>
+    <button class="btn-secondary" id="audCloseBtn" style="margin-top:10px;">Close</button>
+  </div>
+</div>
 
 <div id="toast"></div>
 
