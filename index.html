@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
 <title>Vvynas Vane — Music Player</title>
 <meta name="description" content="Your local music library, reborn on the web.">
-<meta name="theme-color" content="#0A0806">
+<meta name="theme-color" content="#000000">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Vvynas Vane">
-<link rel="icon" href="favi.jpeg">
+<link rel="icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -89,6 +89,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 000-7.8z"/></svg>
           Favorites <span class="count" id="navFavoritesCount"></span>
         </button></li>
+        <li><button class="nav-item" data-view="recent">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+          Recently Played <span class="count" id="navRecentCount"></span>
+        </button></li>
       </ul>
 
       <ul class="nav-list" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--divider);">
@@ -159,6 +163,8 @@
         <section id="view-folder-detail" class="hidden"></section>
         <!-- Favorites view -->
         <section id="view-favorites" class="hidden"></section>
+        <!-- Recently Played (default system playlist) -->
+        <section id="view-recent" class="hidden"></section>
       </div>
     </main>
   </div>
@@ -261,7 +267,7 @@
   <!-- ============ NEW PLAYLIST MODAL ============ -->
   <div class="modal-overlay" id="newPlaylistModalOverlay">
     <div class="modal">
-      <h3>New Playlist</h3>
+      <h3 id="newPlaylistModalTitle">New Playlist</h3>
       <input type="text" id="newPlaylistInput" placeholder="Playlist name" maxlength="60">
       <div class="modal-actions">
         <button class="btn-secondary" id="cancelNewPlaylistBtn">Cancel</button>

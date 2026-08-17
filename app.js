@@ -17,6 +17,7 @@ const { idbGet, idbSet, idbDelete, idbGetAll, idbGetAllKeys, idbPut } = window.V
    State
    --------------------------------------------------------------------- */
 const AUDIO_EXT = /\.(mp3|m4a|aac|wav|ogg|oga|flac|opus|weba|webm)$/i;
+const RECENT_CAP = 100;
 
 const state = {
   songs: [],            // {id, title, artist, album, folder, ext, duration, size, dateAdded, year, handleRef}
@@ -24,6 +25,11 @@ const state = {
   playlists: [],         // {id, name, songIds:[]}
   favorites: new Set(),
   playCounts: new Map(),
+  recentlyPlayed: [],    // [{id, playedAt}] most-recent-first, capped at RECENT_CAP
+  selectMode: false,
+  selectedIds: new Set(),
+  playlistModalMode: "create", // "create" | "rename"
+  renameTargetId: null,
   currentView: "songs",
   currentFolder: null,
   currentPlaylist: null,
@@ -71,6 +77,7 @@ const els = {
   viewFolders: $("#view-folders"),
   viewFolderDetail: $("#view-folder-detail"),
   viewFavorites: $("#view-favorites"),
+  viewRecent: $("#view-recent"),
   storageLabel: $("#storageLabel"),
   rescanBtn: $("#rescanBtn"),
   installSidebarBtn: $("#installSidebarBtn"),
@@ -120,6 +127,7 @@ const els = {
   closePlaylistModalBtn: $("#closePlaylistModalBtn"),
 
   newPlaylistModalOverlay: $("#newPlaylistModalOverlay"),
+  newPlaylistModalTitle: $("#newPlaylistModalTitle"),
   newPlaylistInput: $("#newPlaylistInput"),
   cancelNewPlaylistBtn: $("#cancelNewPlaylistBtn"),
   confirmNewPlaylistBtn: $("#confirmNewPlaylistBtn"),
@@ -511,7 +519,7 @@ function finishOnboarding() {
    Persisted user data: playlists / favorites / play counts / settings
    --------------------------------------------------------------------- */
 async function loadUserData() {
-  const [playlists, favKeys, pcEntries, settings] = await Promise.all([
+  const [playlists, favKeys, pcEntries, settings, recent] = await Promise.all([
     idbGetAll("playlists"),
     idbGetAllKeys("favorites"),
     (async () => {
@@ -529,15 +537,41 @@ async function loadUserData() {
       });
     })(),
     idbGet("kv", "settings"),
+    idbGet("kv", "recentlyPlayed"),
   ]);
   state.playlists = playlists || [];
   state.favorites = new Set(favKeys || []);
   state.playCounts = new Map(pcEntries || []);
+  state.recentlyPlayed = recent || [];
   if (settings) state.settings = { ...state.settings, ...settings };
   applySettingsToUI();
 }
 
 async function saveSettings() { await idbSet("kv", "settings", state.settings); }
+
+/* Default system playlist: Recently Played — records a play event every
+   time a song starts, most-recent-first, capped at RECENT_CAP entries. */
+async function recordRecentlyPlayed(songId) {
+  state.recentlyPlayed = state.recentlyPlayed.filter(e => e.id !== songId);
+  state.recentlyPlayed.unshift({ id: songId, playedAt: Date.now() });
+  if (state.recentlyPlayed.length > RECENT_CAP) state.recentlyPlayed.length = RECENT_CAP;
+  await idbSet("kv", "recentlyPlayed", state.recentlyPlayed);
+  if (state.currentView === "recent") render();
+  else updateNavCounts();
+}
+function recentlyPlayedSongs() {
+  return state.recentlyPlayed.map(e => state.songs.find(s => s.id === e.id)).filter(Boolean);
+}
+async function removeFromRecentlyPlayed(songIds) {
+  const remove = new Set(songIds);
+  state.recentlyPlayed = state.recentlyPlayed.filter(e => !remove.has(e.id));
+  await idbSet("kv", "recentlyPlayed", state.recentlyPlayed);
+}
+async function clearRecentlyPlayed() {
+  state.recentlyPlayed = [];
+  await idbSet("kv", "recentlyPlayed", []);
+  render();
+}
 
 async function toggleFavorite(songId) {
   if (state.favorites.has(songId)) {
@@ -549,6 +583,10 @@ async function toggleFavorite(songId) {
   }
   render();
   syncPlayerFavIcon();
+}
+async function removeFavorites(songIds) {
+  await Promise.all(songIds.map(id => { state.favorites.delete(id); return idbDelete("favorites", id); }));
+  render();
 }
 
 async function bumpPlayCount(songId) {
@@ -584,6 +622,21 @@ async function deletePlaylist(playlistId) {
   state.playlists = state.playlists.filter(p => p.id !== playlistId);
   await idbDelete("playlists", playlistId);
   navigateTo("playlists");
+}
+async function renamePlaylist(playlistId, newName) {
+  const pl = state.playlists.find(p => p.id === playlistId);
+  if (!pl) return;
+  pl.name = newName.trim() || pl.name;
+  await idbPut("playlists", pl);
+  render();
+}
+async function removeSongsFromPlaylist(playlistId, songIds) {
+  const pl = state.playlists.find(p => p.id === playlistId);
+  if (!pl) return;
+  const remove = new Set(songIds);
+  pl.songIds = pl.songIds.filter(id => !remove.has(id));
+  await idbPut("playlists", pl);
+  render();
 }
 
 /* ---------------------------------------------------------------------
@@ -623,8 +676,11 @@ function visibleSongs(list) { return sortSongs(filterSongs(list)); }
 function songRowHtml(song, index, opts = {}) {
   const isPlaying = state.queue[state.queueIndex] === song.id;
   const fav = state.favorites.has(song.id);
+  const selecting = opts.selectable && state.selectMode;
+  const selected = selecting && state.selectedIds.has(song.id);
   return `
-  <div class="song-row ${isPlaying ? "playing" : ""}" data-id="${song.id}" tabindex="0" role="button">
+  <div class="song-row ${isPlaying ? "playing" : ""} ${selected ? "selected" : ""}" data-id="${song.id}" tabindex="0" role="button">
+    ${selecting ? `<span class="row-check" data-action="toggle-select" data-id="${song.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12l5 5L20 6"/></svg></span>` : ""}
     ${opts.showIndex ? `<span class="index">${index + 1}</span>` : ""}
     <div class="art">${artHtml(song)}</div>
     <div class="meta">
@@ -632,14 +688,17 @@ function songRowHtml(song, index, opts = {}) {
       <div class="sub">${escapeHtml(song.artist)} ${song.album ? "· " + escapeHtml(song.album) : ""}</div>
     </div>
     <span class="dur">${song.duration ? fmtTime(song.duration) : ""}</span>
-    <div class="row-actions">
+    ${selecting ? "" : `<div class="row-actions">
       <button class="fav-btn ${fav ? "active" : ""}" data-action="fav" data-id="${song.id}" title="Favorite">
         <svg viewBox="0 0 24 24" fill="${fav ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 000-7.8z"/></svg>
+      </button>
+      <button class="queue-btn" data-action="queue" data-id="${song.id}" title="Play next">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h9M4 12h9M4 18h9M17 6v12m0 0l-3-3m3 3l3-3"/></svg>
       </button>
       <button class="more-btn" data-action="more" data-id="${song.id}" title="Add to playlist">
         <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
       </button>
-    </div>
+    </div>`}
   </div>`;
 }
 function escapeHtml(str) {
@@ -662,13 +721,48 @@ function renderSongsView() {
         '<path d="M9 18V5l12-2v13M9 18a3 3 0 11-6 0 3 3 0 016 0zm12-2a3 3 0 11-6 0 3 3 0 016 0z"/>');
 }
 
+/* ---------------------------------------------------------------------
+   Multi-select toolbar — shared by Favorites, Recently Played, and
+   individual Playlists, since "select all + remove" means something
+   slightly different in each (un-favorite / forget / remove-from-list).
+   --------------------------------------------------------------------- */
+function selectToolbarHtml(totalCount) {
+  const n = state.selectedIds.size;
+  if (!state.selectMode) return "";
+  return `
+  <div class="select-toolbar">
+    <button data-action="select-all">${n === totalCount && totalCount > 0 ? "Deselect All" : "Select All"}</button>
+    <span class="count">${n} selected</span>
+    <button class="remove-selected-btn" data-action="remove-selected" ${n === 0 ? "disabled" : ""}>Remove</button>
+    <button data-action="cancel-select">Cancel</button>
+  </div>`;
+}
+function selectToggleBtnHtml() {
+  return `<button class="select-toggle-btn ${state.selectMode ? "active" : ""}" data-action="toggle-select-mode" title="Select songs">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12l5 5L20 6"/></svg> Select
+  </button>`;
+}
+
 function renderFavoritesView() {
   const list = visibleSongs(state.songs.filter(s => state.favorites.has(s.id)));
   els.viewFavorites.innerHTML = list.length
-    ? `<div class="section-label">${list.length} Favorite${list.length === 1 ? "" : "s"}</div>` +
-      list.map((s, i) => songRowHtml(s, i)).join("")
+    ? `<div class="section-label">${list.length} Favorite${list.length === 1 ? "" : "s"}${selectToggleBtnHtml()}</div>` +
+      selectToolbarHtml(list.length) +
+      list.map((s, i) => songRowHtml(s, i, { selectable: true })).join("")
     : emptyStateHtml("No favorites yet", "Tap the heart on any song to keep it close.",
         '<path d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 000-7.8z"/>');
+}
+
+function renderRecentView() {
+  const list = visibleSongs(recentlyPlayedSongs());
+  els.viewRecent.innerHTML = list.length
+    ? `<div class="section-label">${list.length} Recently Played${selectToggleBtnHtml()}
+        <button class="icon-btn" style="margin-left:6px;width:auto;height:auto;padding:5px 10px;border-radius:999px;font-size:10.5px;" data-action="clear-recent" title="Clear history">Clear</button>
+      </div>` +
+      selectToolbarHtml(list.length) +
+      list.map((s, i) => songRowHtml(s, i, { selectable: true })).join("")
+    : emptyStateHtml("Nothing played yet", "Songs you play will show up here automatically.",
+        '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>');
 }
 
 function renderFoldersView() {
@@ -697,10 +791,16 @@ function renderFolderDetail(folderPath) {
 }
 
 function renderPlaylistsView() {
+  const recentCount = state.recentlyPlayed.length;
   els.viewPlaylists.innerHTML = `<div class="card-grid">
     <div class="playlist-card new-playlist-card" id="newPlaylistCard">
       <div class="art"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 5v14M5 12h14"/></svg></div>
       <div class="name">New Playlist</div>
+    </div>
+    <div class="playlist-card recent-card" data-view-jump="recent">
+      <div class="art"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg></div>
+      <div class="name">Recently Played</div>
+      <div class="n">${recentCount} song${recentCount === 1 ? "" : "s"}</div>
     </div>
     ${state.playlists.map(pl => `
     <div class="playlist-card" data-playlist="${pl.id}">
@@ -719,10 +819,15 @@ function renderPlaylistDetail(playlistId) {
   els.viewPlaylistDetail.innerHTML = `
     <button class="btn-secondary" style="width:auto;display:inline-flex;margin-bottom:16px;" data-action="back-playlists">← All Playlists</button>
     <div class="section-label">${escapeHtml(pl.name)}
-      <button class="icon-btn" style="margin-left:8px;" data-action="delete-playlist" data-id="${pl.id}" title="Delete playlist">
+      <button class="playlist-rename-btn" data-action="rename-playlist" data-id="${pl.id}" title="Rename playlist">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+      </button>
+      <button class="icon-btn" style="margin-left:2px;" data-action="delete-playlist" data-id="${pl.id}" title="Delete playlist">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0l-1 14a2 2 0 01-2 2H7a2 2 0 01-2-2L4 6"/></svg>
       </button>
+      ${list.length ? selectToggleBtnHtml() : ""}
     </div>
+    ${selectToolbarHtml(list.length)}
     ${list.length ? list.map((s, i) => playlistRowHtml(s, i, pl.id)).join("") :
       emptyStateHtml("Playlist is empty", "Use the ⋮ menu on any song to add it here.",
       '<path d="M9 18V5l12-2v13M9 18a3 3 0 11-6 0 3 3 0 016 0zm12-2a3 3 0 11-6 0 3 3 0 016 0z"/>')}
@@ -730,19 +835,25 @@ function renderPlaylistDetail(playlistId) {
 }
 function playlistRowHtml(song, index, playlistId) {
   const isPlaying = state.queue[state.queueIndex] === song.id;
+  const selecting = state.selectMode;
+  const selected = selecting && state.selectedIds.has(song.id);
   return `
-  <div class="song-row ${isPlaying ? "playing" : ""}" data-id="${song.id}" data-playlist-ctx="${playlistId}" tabindex="0" role="button">
+  <div class="song-row ${isPlaying ? "playing" : ""} ${selected ? "selected" : ""}" data-id="${song.id}" data-playlist-ctx="${playlistId}" tabindex="0" role="button">
+    ${selecting ? `<span class="row-check" data-action="toggle-select" data-id="${song.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12l5 5L20 6"/></svg></span>` : ""}
     <div class="art">${artHtml(song)}</div>
     <div class="meta">
       <div class="title">${escapeHtml(song.title)}</div>
       <div class="sub">${escapeHtml(song.artist)}</div>
     </div>
     <span class="dur">${song.duration ? fmtTime(song.duration) : ""}</span>
-    <div class="row-actions">
+    ${selecting ? "" : `<div class="row-actions">
+      <button class="queue-btn" data-action="queue" data-id="${song.id}" title="Play next">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h9M4 12h9M4 18h9M17 6v12m0 0l-3-3m3 3l3-3"/></svg>
+      </button>
       <button class="more-btn" data-action="remove-from-playlist" data-id="${song.id}" data-playlist="${playlistId}" title="Remove">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
-    </div>
+    </div>`}
   </div>`;
 }
 
@@ -751,13 +862,14 @@ function updateNavCounts() {
   $("#navPlaylistsCount").textContent = state.playlists.length || "";
   $("#navFoldersCount").textContent = state.foldersMap.size || "";
   $("#navFavoritesCount").textContent = state.favorites.size || "";
+  $("#navRecentCount").textContent = state.recentlyPlayed.length || "";
   updateRavensLine();
 }
 
 function render() {
   updateNavCounts();
   const v = state.currentView;
-  [els.viewSongs, els.viewPlaylists, els.viewPlaylistDetail, els.viewFolders, els.viewFolderDetail, els.viewFavorites]
+  [els.viewSongs, els.viewPlaylists, els.viewPlaylistDetail, els.viewFolders, els.viewFolderDetail, els.viewFavorites, els.viewRecent]
     .forEach(el => el.classList.add("hidden"));
 
   if (v === "songs") { els.viewSongs.classList.remove("hidden"); renderSongsView(); els.viewTitle.textContent = "Library"; }
@@ -766,6 +878,7 @@ function render() {
   else if (v === "folders") { els.viewFolders.classList.remove("hidden"); renderFoldersView(); els.viewTitle.textContent = "Folders"; }
   else if (v === "folder-detail") { els.viewFolderDetail.classList.remove("hidden"); renderFolderDetail(state.currentFolder); els.viewTitle.textContent = "Folder"; }
   else if (v === "favorites") { els.viewFavorites.classList.remove("hidden"); renderFavoritesView(); els.viewTitle.textContent = "Favorites"; }
+  else if (v === "recent") { els.viewRecent.classList.remove("hidden"); renderRecentView(); els.viewTitle.textContent = "Recently Played"; }
 
   els.contentScroll.scrollTop = render._lastView === v ? els.contentScroll.scrollTop : 0;
   render._lastView = v;
@@ -773,6 +886,8 @@ function render() {
 
 function navigateTo(view) {
   state.currentView = view;
+  state.selectMode = false;
+  state.selectedIds.clear();
   els.navItems.forEach(b => b.classList.toggle("active", b.dataset.view === view));
   els.tabbarBtns.forEach(b => b.classList.toggle("active", b.dataset.view === view));
   render();
@@ -801,6 +916,23 @@ async function playSongId(songId, queueList) {
   await loadAndPlayCurrent();
 }
 
+/** "Add up next" — inserts right after the currently playing track, or
+ *  starts a fresh queue with it if nothing is playing yet. */
+function addToQueueNext(songId) {
+  const song = state.songs.find(s => s.id === songId);
+  if (!song) return;
+  if (!state.queue.length) { playSongId(songId); return; }
+  // If it's already queued somewhere, relocate it rather than duplicate it.
+  const existingIndex = state.queue.indexOf(songId);
+  if (existingIndex !== -1) {
+    state.queue.splice(existingIndex, 1);
+    if (existingIndex < state.queueIndex) state.queueIndex--; // removing an earlier item shifts the current index down
+  }
+  state.queue.splice(state.queueIndex + 1, 0, songId);
+  toast(`Up next: ${song.title}`);
+  if (els.queueSheet.classList.contains("open")) renderQueueSheet();
+}
+
 async function loadAndPlayCurrent() {
   const songId = state.queue[state.queueIndex];
   const song = state.songs.find(s => s.id === songId);
@@ -814,6 +946,7 @@ async function loadAndPlayCurrent() {
   catch (err) { state.isPlaying = false; }
   bumpPlayCount(songId);
   bumpMonthStat(song);
+  recordRecentlyPlayed(songId);
   window.VV.BookTransition.play();
   syncNowPlayingUI(song);
   updateMediaSession(song);
@@ -973,11 +1106,28 @@ function updateMediaSession(song) {
 function openPlayer() { els.playerOverlay.classList.add("open"); }
 function closePlayer() { els.playerOverlay.classList.remove("open"); }
 
+function queueRowHtml(song, index) {
+  const isCurrent = index === state.queueIndex;
+  return `
+  <div class="song-row ${isCurrent ? "playing" : ""}" data-id="${song.id}" data-queue-index="${index}" tabindex="0" role="button">
+    <span class="index">${index + 1}</span>
+    <div class="art">${artHtml(song)}</div>
+    <div class="meta">
+      <div class="title">${escapeHtml(song.title)}</div>
+      <div class="sub">${escapeHtml(song.artist)}</div>
+    </div>
+    <span class="dur">${song.duration ? fmtTime(song.duration) : ""}</span>
+    <div class="row-actions">
+      <button class="more-btn" data-action="remove-from-queue" data-queue-index="${index}" title="Remove from queue">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+  </div>`;
+}
 function renderQueueSheet() {
   const items = state.queue.map((id, i) => {
     const song = state.songs.find(s => s.id === id);
-    if (!song) return "";
-    return songRowHtml(song, i, { showIndex: true }).replace('class="song-row', `class="song-row ${i === state.queueIndex ? "playing" : ""}`);
+    return song ? queueRowHtml(song, i) : "";
   }).join("");
   els.queueList.innerHTML = items || emptyStateHtml("Queue is empty", "Play a song to build your queue.", '<path d="M4 6h16M4 12h10M4 18h16"/>');
 }
@@ -999,7 +1149,20 @@ function openPlaylistModal(songId) {
   els.playlistModalOverlay.classList.add("open");
 }
 function closePlaylistModal() { els.playlistModalOverlay.classList.remove("open"); }
-function openNewPlaylistModal() { els.newPlaylistModalOverlay.classList.add("open"); els.newPlaylistInput.value = ""; els.newPlaylistInput.focus(); }
+function openNewPlaylistModal() {
+  state.playlistModalMode = "create"; state.renameTargetId = null;
+  els.newPlaylistModalTitle.textContent = "New Playlist";
+  els.confirmNewPlaylistBtn.textContent = "Create";
+  els.newPlaylistModalOverlay.classList.add("open"); els.newPlaylistInput.value = ""; els.newPlaylistInput.focus();
+}
+function openRenamePlaylistModal(playlistId) {
+  const pl = state.playlists.find(p => p.id === playlistId);
+  if (!pl) return;
+  state.playlistModalMode = "rename"; state.renameTargetId = playlistId;
+  els.newPlaylistModalTitle.textContent = "Rename Playlist";
+  els.confirmNewPlaylistBtn.textContent = "Save";
+  els.newPlaylistModalOverlay.classList.add("open"); els.newPlaylistInput.value = pl.name; els.newPlaylistInput.focus(); els.newPlaylistInput.select();
+}
 function closeNewPlaylistModal() { els.newPlaylistModalOverlay.classList.remove("open"); }
 
 /* ---------------------------------------------------------------------
@@ -1108,38 +1271,101 @@ els.iosModalOverlay.addEventListener("click", (e) => { if (e.target === els.iosM
 els.contentScroll.addEventListener("click", (e) => {
   const favBtn = e.target.closest('[data-action="fav"]');
   if (favBtn) { window.VV.PixieDust.burstFromEl(favBtn); toggleFavorite(favBtn.dataset.id); return; }
+  const queueBtn = e.target.closest('[data-action="queue"]');
+  if (queueBtn) { window.VV.PixieDust.burstFromEl(queueBtn); addToQueueNext(queueBtn.dataset.id); return; }
   const moreBtn = e.target.closest('[data-action="more"]');
   if (moreBtn) { openPlaylistModal(moreBtn.dataset.id); return; }
   const rmBtn = e.target.closest('[data-action="remove-from-playlist"]');
   if (rmBtn) { removeSongFromPlaylist(rmBtn.dataset.playlist, rmBtn.dataset.id); return; }
   const delPl = e.target.closest('[data-action="delete-playlist"]');
   if (delPl) { if (confirm("Delete this playlist?")) deletePlaylist(delPl.dataset.id); return; }
+  const renamePl = e.target.closest('[data-action="rename-playlist"]');
+  if (renamePl) { openRenamePlaylistModal(renamePl.dataset.id); return; }
+  const clearRecent = e.target.closest('[data-action="clear-recent"]');
+  if (clearRecent) { if (confirm("Clear your Recently Played history?")) clearRecentlyPlayed(); return; }
   const backFolders = e.target.closest('[data-action="back-folders"]');
   if (backFolders) { navigateTo("folders"); return; }
   const backPlaylists = e.target.closest('[data-action="back-playlists"]');
   if (backPlaylists) { navigateTo("playlists"); return; }
+
+  // Multi-select mode: toggle mode, toggle one row, select-all, remove-selected, cancel.
+  const toggleModeBtn = e.target.closest('[data-action="toggle-select-mode"]');
+  if (toggleModeBtn) { state.selectMode = !state.selectMode; state.selectedIds.clear(); render(); return; }
+  const cancelSelectBtn = e.target.closest('[data-action="cancel-select"]');
+  if (cancelSelectBtn) { state.selectMode = false; state.selectedIds.clear(); render(); return; }
+  const selectAllBtn = e.target.closest('[data-action="select-all"]');
+  if (selectAllBtn) {
+    const idsInView = currentSelectableSongIds();
+    const allSelected = idsInView.length > 0 && idsInView.every(id => state.selectedIds.has(id));
+    if (allSelected) state.selectedIds.clear();
+    else idsInView.forEach(id => state.selectedIds.add(id));
+    render();
+    return;
+  }
+  const removeSelectedBtn = e.target.closest('[data-action="remove-selected"]');
+  if (removeSelectedBtn && !removeSelectedBtn.disabled) { performBulkRemove(); return; }
+  const checkEl = e.target.closest('[data-action="toggle-select"]');
+  if (checkEl) { toggleRowSelected(checkEl.dataset.id); return; }
 
   const folderCard = e.target.closest("[data-folder]");
   if (folderCard) { state.currentFolder = decodeURIComponent(folderCard.dataset.folder); navigateTo("folder-detail"); return; }
 
   const newPlCard = e.target.closest("#newPlaylistCard");
   if (newPlCard) { openNewPlaylistModal(); return; }
+  const recentCard = e.target.closest('[data-view-jump="recent"]');
+  if (recentCard) { navigateTo("recent"); return; }
   const plCard = e.target.closest("[data-playlist]");
   if (plCard) { state.currentPlaylist = plCard.dataset.playlist; navigateTo("playlist-detail"); return; }
 
   const row = e.target.closest(".song-row");
   if (row) {
-    window.VV.PixieDust.burstFromEl(row);
     const id = row.dataset.id;
+    if (state.selectMode) { toggleRowSelected(id); return; }
+    window.VV.PixieDust.burstFromEl(row);
     let queueList;
     if (state.currentView === "folder-detail") queueList = visibleSongs(state.songs.filter(s => (state.foldersMap.get(state.currentFolder) || []).includes(s.id))).map(s => s.id);
     else if (state.currentView === "playlist-detail") { const pl = state.playlists.find(p => p.id === state.currentPlaylist); queueList = visibleSongs(pl.songIds.map(sid => state.songs.find(s => s.id === sid)).filter(Boolean)).map(s => s.id); }
     else if (state.currentView === "favorites") queueList = visibleSongs(state.songs.filter(s => state.favorites.has(s.id))).map(s => s.id);
+    else if (state.currentView === "recent") queueList = visibleSongs(recentlyPlayedSongs()).map(s => s.id);
     else queueList = visibleSongs(state.songs).map(s => s.id);
     playSongId(id, queueList);
     openPlayer();
   }
 });
+
+/* ---------------------------------------------------------------------
+   Multi-select helpers
+   --------------------------------------------------------------------- */
+function currentSelectableSongIds() {
+  if (state.currentView === "favorites") return visibleSongs(state.songs.filter(s => state.favorites.has(s.id))).map(s => s.id);
+  if (state.currentView === "recent") return visibleSongs(recentlyPlayedSongs()).map(s => s.id);
+  if (state.currentView === "playlist-detail") {
+    const pl = state.playlists.find(p => p.id === state.currentPlaylist);
+    return pl ? visibleSongs(pl.songIds.map(id => state.songs.find(s => s.id === id)).filter(Boolean)).map(s => s.id) : [];
+  }
+  return [];
+}
+function toggleRowSelected(id) {
+  if (state.selectedIds.has(id)) state.selectedIds.delete(id); else state.selectedIds.add(id);
+  render();
+}
+async function performBulkRemove() {
+  const ids = Array.from(state.selectedIds);
+  if (!ids.length) return;
+  if (state.currentView === "favorites") {
+    await removeFavorites(ids);
+    toast(`Removed ${ids.length} favorite${ids.length === 1 ? "" : "s"}`);
+  } else if (state.currentView === "recent") {
+    await removeFromRecentlyPlayed(ids);
+    toast(`Removed ${ids.length} from history`);
+  } else if (state.currentView === "playlist-detail") {
+    await removeSongsFromPlaylist(state.currentPlaylist, ids);
+    toast(`Removed ${ids.length} song${ids.length === 1 ? "" : "s"} from playlist`);
+  }
+  state.selectMode = false;
+  state.selectedIds.clear();
+  render();
+}
 
 // Playlist pick modal
 els.playlistPickList.addEventListener("click", (e) => {
@@ -1155,6 +1381,11 @@ els.newPlaylistModalOverlay.addEventListener("click", (e) => { if (e.target === 
 els.confirmNewPlaylistBtn.addEventListener("click", async () => {
   const name = els.newPlaylistInput.value.trim();
   if (!name) { toast("Give it a name first."); return; }
+  if (state.playlistModalMode === "rename" && state.renameTargetId) {
+    await renamePlaylist(state.renameTargetId, name);
+    closeNewPlaylistModal();
+    return;
+  }
   const pl = await createPlaylist(name);
   closeNewPlaylistModal();
   if (state.addToPlaylistTargetId) { await addSongToPlaylist(pl.id, state.addToPlaylistTargetId); state.addToPlaylistTargetId = null; }
@@ -1182,8 +1413,18 @@ els.queueBtn.addEventListener("click", openQueue);
 els.closeQueueBtn.addEventListener("click", closeQueue);
 els.sheetOverlay.addEventListener("click", closeQueue);
 els.queueList.addEventListener("click", (e) => {
+  const rmBtn = e.target.closest('[data-action="remove-from-queue"]');
+  if (rmBtn) {
+    const idx = Number(rmBtn.dataset.queueIndex);
+    state.queue.splice(idx, 1);
+    if (idx < state.queueIndex) state.queueIndex--;
+    else if (idx === state.queueIndex) state.queueIndex = Math.min(state.queueIndex, state.queue.length - 1);
+    renderQueueSheet();
+    render();
+    return;
+  }
   const row = e.target.closest(".song-row");
-  if (row) { state.queueIndex = state.queue.indexOf(row.dataset.id); loadAndPlayCurrent(); closeQueue(); }
+  if (row) { state.queueIndex = Number(row.dataset.queueIndex); loadAndPlayCurrent(); closeQueue(); }
 });
 
 window.addEventListener("keydown", (e) => {
