@@ -519,9 +519,36 @@ window.addEventListener("keydown", (e) => {
 });
 
 /* ---------------------------------------------------------------------
+   Custom accent colors — mirrors the picker in Settings on the main
+   library page, so the CC/AUD buttons and active states here match.
+   --------------------------------------------------------------------- */
+function hexToRgb(hex) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || "");
+  return m ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) } : { r: 201, g: 168, b: 76 };
+}
+function rgbToHex(r, g, b) { return "#" + [r, g, b].map(v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, "0")).join(""); }
+function shadeColor(hex, factor) { const { r, g, b } = hexToRgb(hex); return rgbToHex(r * factor, g * factor, b * factor); }
+function rgbaStr(hex, alpha) { const { r, g, b } = hexToRgb(hex); return `rgba(${r},${g},${b},${alpha})`; }
+async function applyStoredAccentColors() {
+  const settings = await idbGet("kv", "settings");
+  if (!settings) return;
+  const root = document.documentElement.style;
+  const a = settings.accentColor || "#C9A84C";
+  const a2 = settings.accent2Color || "#B22222";
+  root.setProperty("--accent", a);
+  root.setProperty("--accent-dark", shadeColor(a, 0.68));
+  root.setProperty("--accent-dim", rgbaStr(a, 0.33));
+  root.setProperty("--ripple", rgbaStr(a, 0.13));
+  root.setProperty("--accent2", a2);
+  root.setProperty("--accent2-dim", rgbaStr(a2, 0.33));
+  if (settings.light) document.documentElement.setAttribute("data-theme", "light");
+}
+
+/* ---------------------------------------------------------------------
    Boot
    --------------------------------------------------------------------- */
 async function boot() {
+  await applyStoredAccentColors();
   const handle = await getStoredHandle();
   if (handle) {
     const granted = await verifyPermission(handle, false);

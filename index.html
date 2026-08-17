@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Vvynas Vane">
-<link rel="icon" href="favi.jpeg">
+<link rel="icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -289,6 +289,23 @@
         <span class="lbl">Resume last folder on open</span>
         <button class="switch on" id="resumeSwitch"></button>
       </div>
+
+      <div class="section-label" style="margin-top:16px;">Custom Colors</div>
+      <div class="color-row">
+        <span class="lbl">Accent color</span>
+        <div class="color-swatch-wrap">
+          <span class="hex-label" id="accentColorHex">#C9A84C</span>
+          <input type="color" id="accentColorInput" value="#C9A84C">
+        </div>
+      </div>
+      <div class="color-row">
+        <span class="lbl">Highlight color</span>
+        <div class="color-swatch-wrap">
+          <span class="hex-label" id="accent2ColorHex">#B22222</span>
+          <input type="color" id="accent2ColorInput" value="#B22222">
+        </div>
+      </div>
+      <button class="btn-secondary reset-colors-btn" id="resetColorsBtn">Reset to Westeros Gold</button>
 
       <div class="section-label" style="margin-top:16px;">Font (8 styles)</div>
       <div class="font-grid" id="fontGrid"></div>

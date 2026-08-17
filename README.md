@@ -3,10 +3,11 @@
 A web replica of the Vvynas Vane Android music player: your local song
 library, playlists (with rename/sort/multi-select-remove), a default
 Recently Played playlist, an editable up-next queue, favorites, folders,
-monthly/yearly recap, a video player with search/subtitles/multi-language
-audio, DJ Mode, and a full-screen player with 42 animated backgrounds —
-all running in the browser. No file is ever uploaded; everything plays
-straight from the folder you grant access to, on-device.
+custom RGB accent colors, monthly/yearly recap, a video player with
+search/subtitles/multi-language audio, DJ Mode, and a full-screen player
+with 42 animated backgrounds — all running in the browser. No file is
+ever uploaded; everything plays straight from the folder you grant access
+to, on-device.
 
 ## Files
 
@@ -46,25 +47,19 @@ step required.
   added/play count. Folders, Playlists, Favorites, generated per-song gold
   sigil art, shuffle/repeat, full-screen player with lock-screen media
   controls.
-- **Up-next queue**: every song row now has a queue icon to add it right
-  after the currently playing track (or start playback if nothing's
-  playing) — separate from the ⋮ "add to playlist" menu. The Up Next sheet
-  itself now has a remove (✕) button per queued track.
+- **Up-next queue**: every song row has a queue icon to add it right after
+  the currently playing track. The Up Next sheet has a remove (✕) button
+  per queued track.
 - **Recently Played** — a default, always-present system playlist that
-  records every song you play (most-recent-first, capped at 100),
-  reachable from the sidebar or as a pinned card at the top of Playlists.
-  Supports the same sort/select-all/remove tools as user playlists, plus a
-  one-tap "Clear" for the whole history.
-- **Playlists**: create, **rename** (pencil icon), delete, and — new —
-  **select-all + bulk remove** songs from any playlist, Favorites, or
-  Recently Played via a "Select" toggle that turns rows into checkboxes.
-  Sorting (the same title/artist/album/duration/size/year/date/play-count
-  dropdown used everywhere) already applies inside every playlist,
-  Favorites, and Recently Played too.
+  records every song you play, reachable from the sidebar or a pinned
+  card at the top of Playlists.
+- **Playlists**: create, rename, delete, and select-all + bulk-remove
+  songs from any playlist, Favorites, or Recently Played.
 - **42 animated backgrounds**, ported theme-by-theme from
   `AnimatedThemeView.java`, plus pixie-dust tap sparkles, a storybook
   page-turn transition, and an orbiting globe-title wordmark.
 - **8-font customization** (Settings → Font), applied live app-wide.
+- **Custom RGB accent colors** (Settings → Custom Colors) — see below.
 - **Monthly & yearly recap** (`recap.html`): purple-starry screen matching
   `RecapActivity`'s own palette, with a downloadable poster.
 - **Video player** (`video.html`) — search, subtitles, and multi-language
@@ -74,13 +69,32 @@ step required.
   visualizer themes running as a true full-page background — ported from
   `DJModeActivity.java` / `DJVisualizer.java`.
 - **Connecting overlay**: an hourglass loader with cycling status text
-  while granting/resuming folder access, instead of a frozen screen.
+  while granting/resuming folder access.
 - **Installable**: manifest + service worker power "Add to Home Screen,"
   available from the sidebar/Settings — not pushed on first load.
 - **Dark mode**: true near-black (`#000000`/`#050505`/`#0B0B0B`) across the
-  whole app, with the gold/crimson accents kept intact.
+  whole app.
 - **Responsive**: sidebar + wide player on tablet/laptop, bottom tab bar +
   compact player on phones.
+
+## Button visibility & custom colors
+
+Every functional icon button across the app — like/up-next/⋮ on song
+rows, the mini-player and full-player controls, sidebar/settings buttons,
+video controls, select-all/remove toolbars — now carries a permanent
+subtle background so it's identifiable at a glance instead of only
+appearing on hover. The like/up-next/more icons specifically also moved
+from a muted to a stronger base color for extra clarity.
+
+Settings → **Custom Colors** adds two RGB pickers (native color inputs):
+**Accent color** and **Highlight color**, replacing the default Westeros
+gold/crimson anywhere `--accent`/`--accent2` (and their derived shades —
+buttons, active states, the seek bar, sigil-art glow, etc.) are used
+across the library and video pages. Changes apply live and persist; a
+"Reset to Westeros Gold" button reverts to the originals. DJ Mode and
+Recap intentionally keep their own distinct built-in palettes (Iron
+Throne war-console neon / purple starry) rather than inheriting this, the
+same way they don't inherit the 42 animated library themes.
 
 ## Video playback & subtitles (`video.html`)
 
@@ -142,6 +156,11 @@ Reachable from the sidebar, the Settings modal, or directly at `dj.html`.
 - Added an up-next queue-add action per song, a default Recently Played
   playlist, playlist rename, and select-all/bulk-remove across playlists,
   Favorites, and Recently Played.
+- Gave every functional button a permanent, always-visible background
+  instead of relying on hover, and boosted the like/up-next/more icon
+  colors specifically.
+- Added custom RGB accent-color pickers in Settings, applied live across
+  the library and video pages, with a one-tap reset to the defaults.
 
 ## Still simplified
 

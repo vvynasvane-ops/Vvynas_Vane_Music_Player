@@ -41,7 +41,7 @@ const state = {
   repeat: "off",         // off | all | one
   isPlaying: false,
   addToPlaylistTargetId: null,
-  settings: { light: false, resume: true, fontStyle: 0, themeId: "none" },
+  settings: { light: false, resume: true, fontStyle: 0, themeId: "none", accentColor: "#C9A84C", accent2Color: "#B22222" },
   usingFSApi: false,
   fileRefs: new Map(),   // songId -> File or FileSystemFileHandle
   objectUrl: null,
@@ -135,6 +135,9 @@ const els = {
   settingsModalOverlay: $("#settingsModalOverlay"),
   lightModeSwitch: $("#lightModeSwitch"),
   resumeSwitch: $("#resumeSwitch"),
+  accentColorInput: $("#accentColorInput"), accentColorHex: $("#accentColorHex"),
+  accent2ColorInput: $("#accent2ColorInput"), accent2ColorHex: $("#accent2ColorHex"),
+  resetColorsBtn: $("#resetColorsBtn"),
   closeSettingsBtn: $("#closeSettingsBtn"),
   settingsRescanBtn: $("#settingsRescanBtn"),
 
@@ -1174,9 +1177,38 @@ function applySettingsToUI() {
   els.resumeSwitch.classList.toggle("on", state.settings.resume);
   window.VV.applyFont(state.settings.fontStyle);
   window.VV.ThemeEngine.setTheme(state.settings.themeId);
+  applyAccentColors();
   renderFontGrid();
   renderThemeGrid();
 }
+
+/* ---------------------------------------------------------------------
+   Custom RGB accent colors — overrides the default Westeros gold/crimson
+   across every place --accent/--accent2 (and their derived shades) are
+   used: buttons, highlights, active states, seek bar, sigil art glow, etc.
+   --------------------------------------------------------------------- */
+function hexToRgb(hex) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || "");
+  return m ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) } : { r: 201, g: 168, b: 76 };
+}
+function rgbToHex(r, g, b) { return "#" + [r, g, b].map(v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, "0")).join(""); }
+function shadeColor(hex, factor) { const { r, g, b } = hexToRgb(hex); return rgbToHex(r * factor, g * factor, b * factor); }
+function rgba(hex, alpha) { const { r, g, b } = hexToRgb(hex); return `rgba(${r},${g},${b},${alpha})`; }
+
+function applyAccentColors() {
+  const root = document.documentElement.style;
+  const a = state.settings.accentColor || "#C9A84C";
+  const a2 = state.settings.accent2Color || "#B22222";
+  root.setProperty("--accent", a);
+  root.setProperty("--accent-dark", shadeColor(a, 0.68));
+  root.setProperty("--accent-dim", rgba(a, 0.33));
+  root.setProperty("--ripple", rgba(a, 0.13));
+  root.setProperty("--accent2", a2);
+  root.setProperty("--accent2-dim", rgba(a2, 0.33));
+  if (els.accentColorInput) { els.accentColorInput.value = a; els.accentColorHex.textContent = a.toUpperCase(); }
+  if (els.accent2ColorInput) { els.accent2ColorInput.value = a2; els.accent2ColorHex.textContent = a2.toUpperCase(); }
+}
+
 function renderFontGrid() {
   const grid = document.getElementById("fontGrid");
   if (!grid) return;
@@ -1249,6 +1281,14 @@ els.closeSettingsBtn.addEventListener("click", closeSettings);
 els.settingsModalOverlay.addEventListener("click", (e) => { if (e.target === els.settingsModalOverlay) closeSettings(); });
 els.lightModeSwitch.addEventListener("click", () => { state.settings.light = !state.settings.light; applySettingsToUI(); saveSettings(); });
 els.resumeSwitch.addEventListener("click", () => { state.settings.resume = !state.settings.resume; applySettingsToUI(); saveSettings(); });
+els.accentColorInput.addEventListener("input", () => { state.settings.accentColor = els.accentColorInput.value; applyAccentColors(); });
+els.accentColorInput.addEventListener("change", saveSettings);
+els.accent2ColorInput.addEventListener("input", () => { state.settings.accent2Color = els.accent2ColorInput.value; applyAccentColors(); });
+els.accent2ColorInput.addEventListener("change", saveSettings);
+els.resetColorsBtn.addEventListener("click", () => {
+  state.settings.accentColor = "#C9A84C"; state.settings.accent2Color = "#B22222";
+  applyAccentColors(); saveSettings(); toast("Colors reset to Westeros gold.");
+});
 
 document.getElementById("fontGrid").addEventListener("click", (e) => {
   const opt = e.target.closest("[data-font-id]");
