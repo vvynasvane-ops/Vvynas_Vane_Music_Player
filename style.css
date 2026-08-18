@@ -395,6 +395,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
   font-size: 13.5px; padding: 12px 22px; border-radius: 999px; width: 100%; margin-top: 12px; transition: all .2s;
 }
 .btn-secondary:hover { border-color: var(--accent-dark); color: var(--accent); background: var(--accent-dim); }
+.btn-primary:hover { border-color: var(--accent-dark); color: var(--accent); background: var(--accent-dim); }
 
 /* ---------- Song rows / grid ---------- */
 .section-label {
