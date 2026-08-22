@@ -11,7 +11,7 @@
    IndexedDB — shared store across every page
    --------------------------------------------------------------------- */
 const DB_NAME = "vvynas-vane-db";
-const DB_VERSION = 3;
+const DB_VERSION = 5;
 let dbPromise = null;
 function openDB() {
   if (dbPromise) return dbPromise;
@@ -25,6 +25,17 @@ function openDB() {
       if (!db.objectStoreNames.contains("playCounts")) db.createObjectStore("playCounts");
       if (!db.objectStoreNames.contains("monthStats")) db.createObjectStore("monthStats");
       if (!db.objectStoreNames.contains("djPlayCounts")) db.createObjectStore("djPlayCounts");
+      // Per-song custom album art (Settings-free — set from the full
+      // player's edit-art button). Key: song id. Value: a resized JPEG
+      // data URL produced by resizeImageFileToDataUrl below.
+      if (!db.objectStoreNames.contains("customArt")) db.createObjectStore("customArt");
+      // Per-song embedded album art — extracted straight out of the audio
+      // file's own tag (ID3v2 APIC, FLAC PICTURE block, or MP4 covr atom)
+      // the first time that file's metadata is read. This is the song's
+      // *own* cover, so it's the default shown any time there's no
+      // user-uploaded custom photo. Key: song id. Value: resized JPEG
+      // data URL, same normalized shape as customArt.
+      if (!db.objectStoreNames.contains("embeddedArt")) db.createObjectStore("embeddedArt");
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -51,27 +62,294 @@ async function idbGetAllKeys(store) {
   const db = await openDB();
   return new Promise((res, rej) => { const tx = db.transaction(store, "readonly"); const r = tx.objectStore(store).getAllKeys(); r.onsuccess = () => res(r.result || []); r.onerror = () => rej(r.error); });
 }
+async function idbGetAllEntries(store) {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(store, "readonly");
+    const objStore = tx.objectStore(store);
+    const out = [];
+    const req = objStore.openCursor();
+    req.onsuccess = () => {
+      const cur = req.result;
+      if (cur) { out.push([cur.key, cur.value]); cur.continue(); } else res(out);
+    };
+    req.onerror = () => rej(req.error);
+  });
+}
 async function idbPut(store, obj) {
   const db = await openDB();
   return new Promise((res, rej) => { const tx = db.transaction(store, "readwrite"); tx.objectStore(store).put(obj); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); });
 }
 
 /* ---------------------------------------------------------------------
-   Generated sigil album art — shared so every page (library, DJ decks)
-   renders the same deterministic art for the same song.
+   Custom album art — takes a photo picked from device storage, at
+   *any* resolution or aspect ratio, and normalizes it into a fixed
+   512x512 JPEG data URL. Center-crops to a square first (like CSS
+   object-fit: cover) so nothing gets stretched or letterboxed, then
+   downscales, so the result is a consistent size/format that drops
+   into every art call site — library rows, mini-player, full player,
+   lock-screen artwork — exactly like generatedArt()'s output does.
+   --------------------------------------------------------------------- */
+async function loadImageBitmapFromFile(file) {
+  if (window.createImageBitmap) {
+    try { return await createImageBitmap(file); } catch { /* fall through to <img> path below */ }
+  }
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = (err) => { URL.revokeObjectURL(url); reject(err); };
+    img.src = url;
+  });
+}
+async function resizeImageFileToDataUrl(file, size = 512, quality = 0.86) {
+  const bitmap = await loadImageBitmapFromFile(file);
+  try {
+    const srcW = bitmap.width, srcH = bitmap.height;
+    const cropSize = Math.min(srcW, srcH);
+    const sx = (srcW - cropSize) / 2, sy = (srcH - cropSize) / 2;
+    const canvas = document.createElement("canvas");
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(bitmap, sx, sy, cropSize, cropSize, 0, 0, size, size);
+    return canvas.toDataURL("image/jpeg", quality);
+  } finally {
+    if (bitmap.close) bitmap.close(); // only ImageBitmap has this, not the <img> fallback
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Embedded album art — pulls the cover picture straight out of the song
+   file's own tag, the same way every mainstream player does it, so a
+   song shows its *real* artwork by default instead of a generated
+   placeholder. Three well-established, self-contained (no CDN/library
+   dependency, so it still works fully offline as an installed PWA)
+   readers cover the formats this app already plays:
+     - ID3v2 (mp3, and some m4a/wav): APIC frame (v2.3/2.4) or PIC (v2.2)
+     - FLAC: METADATA_BLOCK_PICTURE (block type 6) in the header
+     - MP4/M4A/AAC: the 'covr' atom under moov/udta/meta/ilst
+   Only a bounded prefix (and, for MP4 only, the whole file if it's not
+   too large) is ever read — never the entire library at once — so this
+   stays cheap even for large lossless files.
+   --------------------------------------------------------------------- */
+const EMBED_SCAN_CAP = 20 * 1024 * 1024;   // read up to 20MB looking for tag headers
+const MP4_FULL_SCAN_CAP = 80 * 1024 * 1024; // MP4 'moov' can trail the file; re-scan whole file up to this size
+
+function bytesToStr(bytes, start, len) {
+  let s = "";
+  for (let i = start; i < start + len && i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return s;
+}
+function sniffImageMime(bytes, offset) {
+  if (bytes[offset] === 0xFF && bytes[offset + 1] === 0xD8) return "image/jpeg";
+  if (bytes[offset] === 0x89 && bytes[offset + 1] === 0x50) return "image/png";
+  if (bytes[offset] === 0x47 && bytes[offset + 1] === 0x49) return "image/gif";
+  return "image/jpeg";
+}
+
+/* ---- ID3v2 (APIC / PIC) ---- */
+function parseID3v2Picture(bytes) {
+  if (bytesToStr(bytes, 0, 3) !== "ID3") return null;
+  const major = bytes[3];
+  const flags = bytes[5];
+  const synchsafe = (b0, b1, b2, b3) => ((b0 & 0x7f) << 21) | ((b1 & 0x7f) << 14) | ((b2 & 0x7f) << 7) | (b3 & 0x7f);
+  const tagSize = synchsafe(bytes[6], bytes[7], bytes[8], bytes[9]);
+  let pos = 10;
+  if (flags & 0x40) { // extended header present
+    const extSize = major >= 4 ? synchsafe(bytes[10], bytes[11], bytes[12], bytes[13]) : ((bytes[10] << 24) | (bytes[11] << 16) | (bytes[12] << 8) | bytes[13]);
+    pos += extSize;
+  }
+  const end = Math.min(bytes.length, 10 + tagSize);
+  while (pos < end - 10) {
+    let id, size, frameHeaderLen;
+    if (major === 2) {
+      id = bytesToStr(bytes, pos, 3);
+      size = (bytes[pos + 3] << 16) | (bytes[pos + 4] << 8) | bytes[pos + 5];
+      frameHeaderLen = 6;
+    } else {
+      id = bytesToStr(bytes, pos, 4);
+      size = major >= 4
+        ? synchsafe(bytes[pos + 4], bytes[pos + 5], bytes[pos + 6], bytes[pos + 7])
+        : ((bytes[pos + 4] << 24) | (bytes[pos + 5] << 16) | (bytes[pos + 6] << 8) | bytes[pos + 7]);
+      frameHeaderLen = 10;
+    }
+    if (!id || size <= 0 || !/^[A-Z0-9]+$/.test(id)) break; // padding/garbage reached
+    const dataStart = pos + frameHeaderLen;
+    if (dataStart + size > bytes.length) break; // frame runs past what we read
+    if (id === "APIC" || id === "PIC") {
+      let p = dataStart;
+      const encoding = bytes[p]; p += 1;
+      let mime;
+      if (id === "PIC") { mime = bytesToStr(bytes, p, 3); p += 3; if (/jpg|jpeg/i.test(mime)) mime = "image/jpeg"; else if (/png/i.test(mime)) mime = "image/png"; else mime = "image/jpeg"; }
+      else {
+        let mEnd = p; while (mEnd < dataStart + size && bytes[mEnd] !== 0) mEnd++;
+        mime = bytesToStr(bytes, p, mEnd - p) || "image/jpeg";
+        p = mEnd + 1;
+      }
+      p += 1; // picture type byte
+      // skip null-terminated description (UTF-16 uses 2-byte terminator)
+      if (encoding === 1 || encoding === 2) {
+        while (p < dataStart + size - 1 && !(bytes[p] === 0 && bytes[p + 1] === 0)) p += 2;
+        p += 2;
+      } else {
+        while (p < dataStart + size && bytes[p] !== 0) p++;
+        p += 1;
+      }
+      const imgStart = p, imgEnd = dataStart + size;
+      if (imgEnd > imgStart) return { mime: mime.startsWith("image/") ? mime : sniffImageMime(bytes, imgStart), bytes: bytes.slice(imgStart, imgEnd) };
+    }
+    pos = dataStart + size;
+  }
+  return null;
+}
+
+/* ---- FLAC (METADATA_BLOCK_PICTURE) ---- */
+function parseFlacPicture(bytes) {
+  if (bytesToStr(bytes, 0, 4) !== "fLaC") return null;
+  let pos = 4;
+  const readU32 = (p) => (bytes[p] * 0x1000000) + ((bytes[p + 1] << 16) | (bytes[p + 2] << 8) | bytes[p + 3]);
+  while (pos + 4 <= bytes.length) {
+    const header = bytes[pos];
+    const isLast = (header & 0x80) !== 0;
+    const type = header & 0x7f;
+    const len = (bytes[pos + 1] << 16) | (bytes[pos + 2] << 8) | bytes[pos + 3];
+    const blockStart = pos + 4;
+    if (blockStart + len > bytes.length) break;
+    if (type === 6) {
+      let p = blockStart;
+      p += 4; // picture type
+      const mimeLen = readU32(p); p += 4;
+      const mime = bytesToStr(bytes, p, mimeLen) || "image/jpeg"; p += mimeLen;
+      const descLen = readU32(p); p += 4 + descLen;
+      p += 16; // width, height, depth, colors (4 bytes each)
+      const dataLen = readU32(p); p += 4;
+      if (p + dataLen <= bytes.length) return { mime: mime.startsWith("image/") ? mime : sniffImageMime(bytes, p), bytes: bytes.slice(p, p + dataLen) };
+      return null;
+    }
+    pos = blockStart + len;
+    if (isLast) break;
+  }
+  return null;
+}
+
+/* ---- MP4/M4A ('covr' atom under moov/udta/meta/ilst) ---- */
+function findMp4Covr(bytes) {
+  const len = bytes.length;
+  const readU32 = (p) => (bytes[p] * 0x1000000) + ((bytes[p + 1] << 16) | (bytes[p + 2] << 8) | bytes[p + 3]);
+  function walk(start, end, path) {
+    let pos = start;
+    while (pos + 8 <= end) {
+      let size = readU32(pos);
+      const type = bytesToStr(bytes, pos + 4, 4);
+      let headerLen = 8;
+      if (size === 1) { // 64-bit extended size — not expected for these small boxes, bail
+        return null;
+      }
+      if (size === 0) size = end - pos; // box extends to end of parent
+      if (size < 8 || pos + size > end) break;
+      const childStart = pos + headerLen;
+      const childEnd = pos + size;
+      if (type === "moov" || type === "udta" || type === "ilst") {
+        const found = walk(childStart, childEnd, path.concat(type));
+        if (found) return found;
+      } else if (type === "meta") {
+        // 'meta' has a 4-byte version/flags field before its children
+        const found = walk(childStart + 4, childEnd, path.concat(type));
+        if (found) return found;
+      } else if (type === "covr") {
+        // 'covr' contains one or more 'data' boxes; take the first
+        let dp = childStart;
+        while (dp + 16 <= childEnd) {
+          const dsize = readU32(dp);
+          const dtype = bytesToStr(bytes, dp + 4, 4);
+          if (dtype === "data" && dsize > 16) {
+            const flagsByte = bytes[dp + 8 + 3]; // type indicator, low byte
+            const dataStart = dp + 16, dataEnd = dp + dsize;
+            const mime = flagsByte === 14 ? "image/png" : "image/jpeg";
+            if (dataEnd <= childEnd) return { mime, bytes: bytes.slice(dataStart, dataEnd) };
+          }
+          if (dsize < 8) break;
+          dp += dsize;
+        }
+      }
+      pos += size;
+    }
+    return null;
+  }
+  return walk(0, len, []);
+}
+
+/** Reads just enough of a file to find its cover picture (if any),
+ *  returning {mime, bytes:Uint8Array} or null. Never throws — any parse
+ *  failure just means "no embedded art found", falling back later to a
+ *  generated icon like before. */
+async function extractRawPictureBlob(file) {
+  try {
+    const head = new Uint8Array(await file.slice(0, Math.min(file.size, 4096)).arrayBuffer());
+    const magic4 = bytesToStr(head, 0, 4);
+    if (magic4 === "ID3\x03" || magic4 === "ID3\x04" || magic4 === "ID3\x02" || bytesToStr(head, 0, 3) === "ID3") {
+      const buf = new Uint8Array(await file.slice(0, Math.min(file.size, EMBED_SCAN_CAP)).arrayBuffer());
+      return parseID3v2Picture(buf);
+    }
+    if (magic4 === "fLaC") {
+      const buf = new Uint8Array(await file.slice(0, Math.min(file.size, EMBED_SCAN_CAP)).arrayBuffer());
+      return parseFlacPicture(buf);
+    }
+    // MP4 family: 'ftyp' box normally sits right at the start (after a 4-byte size)
+    const boxType = bytesToStr(head, 4, 4);
+    if (boxType === "ftyp") {
+      let buf = new Uint8Array(await file.slice(0, Math.min(file.size, EMBED_SCAN_CAP)).arrayBuffer());
+      let found = findMp4Covr(buf);
+      if (!found && file.size > buf.length && file.size <= MP4_FULL_SCAN_CAP) {
+        // 'moov' (which holds the cover) sometimes trails after 'mdat' —
+        // fall back to reading the whole file, but only if it's not huge.
+        buf = new Uint8Array(await file.arrayBuffer());
+        found = findMp4Covr(buf);
+      }
+      return found;
+    }
+  } catch { /* fall through — no embedded art */ }
+  return null;
+}
+
+/** Full pipeline: extract the song's own embedded cover (if any) and
+ *  normalize it into the same 512x512 JPEG data URL shape as
+ *  resizeImageFileToDataUrl produces for user-uploaded photos, so it
+ *  drops into every existing art call site unchanged. Returns null when
+ *  the file has no readable embedded picture. */
+async function getEmbeddedArtForFile(file) {
+  const pic = await extractRawPictureBlob(file);
+  if (!pic || !pic.bytes || !pic.bytes.length) return null;
+  try {
+    const blob = new Blob([pic.bytes], { type: pic.mime || "image/jpeg" });
+    return await resizeImageFileToDataUrl(blob, 512, 0.86);
+  } catch { return null; }
+}
+
+/* ---------------------------------------------------------------------
+   Generated album art — shared so every page (library, DJ decks) renders
+   the same deterministic art for the same song. Multiple hazard-themed
+   styles are selectable in Settings; "sigil" (Westeros gold) is default.
    --------------------------------------------------------------------- */
 const SIGIL_PALETTES = [
   ["#C9A84C", "#8A6E2A", "#1A1410"], ["#B22222", "#6b1414", "#1A1410"], ["#8B9CA8", "#3f4c55", "#110E0B"],
   ["#4A7C59", "#274430", "#110E0B"], ["#2E4A6A", "#182838", "#0A0806"], ["#CC5500", "#7a3300", "#1A1410"],
 ];
 const artCache = new Map();
+let currentArtStyle = "sigil";
+function setArtStyle(style) { currentArtStyle = style; artCache.clear(); }
+function getArtStyle() { return currentArtStyle; }
+const ART_STYLES = [
+  { id: "sigil", label: "Sigil (Default)" },
+  { id: "skull", label: "Skeleton Hazard" },
+  { id: "blood", label: "Vicious Blood" },
+  { id: "biohazard", label: "Chernobyl Vybz" },
+  { id: "gasmask", label: "Gas Mask" },
+];
 function hashStr(str) { let h = 0; for (let i = 0; i < str.length; i++) { h = (h << 5) - h + str.charCodeAt(i); h |= 0; } return "s" + Math.abs(h).toString(36) + str.length.toString(36); }
-function generatedArt(seedStr, size = 200) {
-  const key = seedStr + "@" + size;
-  if (artCache.has(key)) return artCache.get(key);
-  const canvas = document.createElement("canvas"); canvas.width = size; canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  const h = Math.abs(hashStr(seedStr).split("").reduce((a, c) => a + c.charCodeAt(0), 0));
+function hashNum(seedStr) { return Math.abs(hashStr(seedStr).split("").reduce((a, c) => a + c.charCodeAt(0), 0)); }
+
+function drawSigilArt(ctx, size, seedStr, h) {
   const pal = SIGIL_PALETTES[h % SIGIL_PALETTES.length];
   const grad = ctx.createRadialGradient(size * .5, size * .4, size * .05, size * .5, size * .5, size * .75);
   grad.addColorStop(0, pal[1]); grad.addColorStop(1, pal[2]);
@@ -86,6 +364,248 @@ function generatedArt(seedStr, size = 200) {
   const letter = (seedStr.trim()[0] || "V").toUpperCase();
   ctx.fillStyle = pal[2]; ctx.font = `700 ${size * .16}px Cinzel, Georgia, serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
   ctx.fillText(letter, size / 2, size / 2 + size * .01);
+}
+
+/** Reusable skull-with-eyeball-out icon, drawn centered at (cx,cy) with
+ *  bone radius r. Shared by the album-art "Skeleton Hazard" style and
+ *  Rage Mode's ambient background so both use the same realistic
+ *  light/shadow model: a light source from upper-left (bone highlight),
+ *  a shadow falloff to lower-right, and specular glints on the rounded
+ *  eyeball/bone-knuckle surfaces to sell a wet/bone-glossy reflection. */
+function drawSkullIcon(ctx, cx, cy, r, opts) {
+  opts = opts || {};
+  const alpha = opts.alpha !== undefined ? opts.alpha : 1;
+  const poppedSide = opts.poppedSide || (Math.round(cx + cy) % 2 === 0 ? -1 : 1); // which socket has the eyeball hanging out
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  // --- lit bone gradient: bright upper-left, shadow lower-right ---
+  const boneGrad = ctx.createLinearGradient(cx - r * .7, cy - r * .8, cx + r * .7, cy + r * .9);
+  boneGrad.addColorStop(0, "#F5EFDD"); boneGrad.addColorStop(.45, "#DCD2B8"); boneGrad.addColorStop(1, "#7A705A");
+  const boneShadow = "rgba(20,10,5,0.55)";
+
+  // ambient contact shadow beneath the skull (grounds it / adds depth)
+  ctx.fillStyle = "rgba(0,0,0,0.45)";
+  ctx.beginPath(); ctx.ellipse(cx, cy + r * 1.02, r * .62, r * .16, 0, 0, Math.PI * 2); ctx.fill();
+
+  // cranium + cheek taper
+  ctx.fillStyle = boneGrad;
+  ctx.beginPath(); ctx.ellipse(cx, cy - r * .16, r * .62, r * .56, 0, Math.PI, 0); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(cx - r * .62, cy - r * .16); ctx.lineTo(cx - r * .48, cy + r * .42);
+  ctx.lineTo(cx + r * .48, cy + r * .42); ctx.lineTo(cx + r * .62, cy - r * .16); ctx.closePath(); ctx.fill();
+  // shadow side (right hemisphere shaded darker, simple directional occlusion)
+  ctx.fillStyle = boneShadow;
+  ctx.beginPath(); ctx.ellipse(cx + r * .2, cy - r * .1, r * .42, r * .5, 0, -Math.PI * .5, Math.PI * .5); ctx.fill();
+
+  // jaw
+  const jawGrad = ctx.createLinearGradient(cx, cy + r * .3, cx, cy + r * .68);
+  jawGrad.addColorStop(0, "#E4D9BE"); jawGrad.addColorStop(1, "#8C8064");
+  ctx.fillStyle = jawGrad;
+  const jw = r * .34, jh = r * .32, jx = cx - jw, jy = cy + r * .32;
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(jx, jy, jw * 2, jh, r * .06); else ctx.rect(jx, jy, jw * 2, jh);
+  ctx.fill();
+
+  // sockets
+  const socketR = r * .21;
+  const leftX = cx - r * .26, rightX = cx + r * .26, socketY = cy - r * .06;
+  function hollowSocket(sx, sy) {
+    const sg = ctx.createRadialGradient(sx, sy, socketR * .1, sx, sy, socketR);
+    sg.addColorStop(0, "#000000"); sg.addColorStop(.7, "rgba(90,0,0,0.9)"); sg.addColorStop(1, "rgba(40,0,0,0.6)");
+    ctx.fillStyle = sg; ctx.beginPath(); ctx.ellipse(sx, sy, socketR, socketR * 1.15, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  function specular(sx, sy, sr, rot) {
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.beginPath(); ctx.ellipse(sx, sy, sr, sr * .45, rot, 0, Math.PI * 2); ctx.fill();
+  }
+  function bloodshotEyeball(sx, sy, er) {
+    // sclera
+    const scleraGrad = ctx.createRadialGradient(sx - er * .3, sy - er * .3, er * .05, sx, sy, er);
+    scleraGrad.addColorStop(0, "#FFF6F0"); scleraGrad.addColorStop(.8, "#E8CFC8"); scleraGrad.addColorStop(1, "#B99A93");
+    ctx.fillStyle = scleraGrad; ctx.beginPath(); ctx.arc(sx, sy, er, 0, Math.PI * 2); ctx.fill();
+    // veins
+    ctx.strokeStyle = "rgba(160,10,10,0.75)"; ctx.lineWidth = er * .06;
+    for (let v = 0; v < 5; v++) { const a = (v / 5) * Math.PI * 2 + 0.4;
+      ctx.beginPath(); ctx.moveTo(sx, sy); ctx.quadraticCurveTo(sx + Math.cos(a) * er * .5, sy + Math.sin(a) * er * .5, sx + Math.cos(a) * er * .95, sy + Math.sin(a) * er * .95); ctx.stroke(); }
+    // iris + pupil
+    const irisGrad = ctx.createRadialGradient(sx, sy, er * .05, sx, sy, er * .48);
+    irisGrad.addColorStop(0, "#6B3A1E"); irisGrad.addColorStop(1, "#2B1408");
+    ctx.fillStyle = irisGrad; ctx.beginPath(); ctx.arc(sx, sy, er * .48, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#050202"; ctx.beginPath(); ctx.arc(sx, sy, er * .22, 0, Math.PI * 2); ctx.fill();
+    // glossy specular reflection — the "light and dark reflection" on a wet surface
+    specular(sx - er * .28, sy - er * .32, er * .22, -0.5);
+  }
+
+  // normal socket (opposite side from the popped eye)
+  hollowSocket(poppedSide < 0 ? rightX : leftX, socketY);
+  // deep glow at the back of the hollow socket
+  ctx.fillStyle = "rgba(139,0,0,0.5)";
+  const nsx = poppedSide < 0 ? rightX : leftX;
+  ctx.beginPath(); ctx.ellipse(nsx, socketY, socketR * .55, socketR * .6, 0, 0, Math.PI * 2); ctx.fill();
+
+  // popped-out socket: left empty/hollow here — the eyeball itself is
+  // drawn last (after the jaw/teeth below) so it hangs in front of the
+  // face rather than being occluded by it.
+  const psx = poppedSide < 0 ? leftX : rightX;
+  hollowSocket(psx, socketY);
+
+  // nose cavity
+  ctx.fillStyle = "#0A0000";
+  ctx.beginPath(); ctx.moveTo(cx, cy + r * .1); ctx.lineTo(cx - r * .09, cy + r * .24); ctx.lineTo(cx + r * .09, cy + r * .24); ctx.closePath(); ctx.fill();
+
+  // teeth (subtle light/shadow per tooth for a bit of relief)
+  for (let t = -2; t <= 2; t++) {
+    const tx = cx + t * r * .11;
+    const tg = ctx.createLinearGradient(tx - r * .04, jy, tx + r * .04, jy);
+    tg.addColorStop(0, "#F2EAD2"); tg.addColorStop(1, "#B7AC8C");
+    ctx.fillStyle = tg; ctx.fillRect(tx - r * .045, jy + r * .02, r * .09, jh - r * .05);
+    ctx.strokeStyle = "rgba(20,10,5,0.5)"; ctx.lineWidth = r * .01; ctx.strokeRect(tx - r * .045, jy + r * .02, r * .09, jh - r * .05);
+  }
+
+  // dangling optic nerve + bloodshot eyeball — drawn last so it hangs in
+  // front of the jaw/teeth clear of the face, instead of behind it
+  ctx.strokeStyle = "rgba(150,10,10,0.9)"; ctx.lineWidth = r * .045; ctx.lineCap = "round";
+  const nerveEndY = jy + jh + r * .22;
+  ctx.beginPath(); ctx.moveTo(psx, socketY + socketR * .3);
+  ctx.quadraticCurveTo(psx + poppedSide * r * .1, cy + r * .5, psx + poppedSide * r * .02, nerveEndY - r * .12); ctx.stroke();
+  ctx.lineCap = "butt";
+  bloodshotEyeball(psx + poppedSide * r * .02, nerveEndY, r * .19);
+  // a slow drip trailing from the dangling eyeball
+  ctx.fillStyle = "rgba(120,0,0,0.75)";
+  ctx.beginPath(); ctx.ellipse(psx + poppedSide * r * .02, nerveEndY + r * .27, r * .028, r * .06, 0, 0, Math.PI * 2); ctx.fill();
+
+  // hairline crack for extra hazard grit
+  ctx.strokeStyle = "rgba(30,15,10,0.5)"; ctx.lineWidth = r * .015;
+  ctx.beginPath(); ctx.moveTo(cx + r * .12, cy - r * .55); ctx.lineTo(cx + r * .22, cy - r * .2); ctx.lineTo(cx + r * .14, cy + r * .02); ctx.stroke();
+
+  // rim light along the top-left edge of the cranium (the "surface catching light" the user asked for)
+  ctx.strokeStyle = "rgba(255,250,235,0.55)"; ctx.lineWidth = r * .035;
+  ctx.beginPath(); ctx.arc(cx, cy - r * .16, r * .62, Math.PI * 1.05, Math.PI * 1.55); ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawSkullArt(ctx, size, h) {
+  const bgPals = [["#120000", "#000000"], ["#0A0A0A", "#000000"], ["#1A0000", "#050000"]];
+  const bg = bgPals[h % bgPals.length];
+  const g = ctx.createRadialGradient(size * .5, size * .42, size * .04, size * .5, size * .5, size * .72);
+  g.addColorStop(0, bg[0]); g.addColorStop(1, bg[1]);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, size, size);
+  // hazard-yellow warning ring
+  ctx.strokeStyle = "#FFD400"; ctx.lineWidth = size * .028; ctx.setLineDash([size * .045, size * .035]);
+  ctx.beginPath(); ctx.arc(size / 2, size / 2, size * .43, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+  drawSkullIcon(ctx, size * .5, size * .42, size * .3, { poppedSide: h % 2 === 0 ? -1 : 1 });
+  // crossbones beneath
+  ctx.strokeStyle = "#DCD2B8"; ctx.lineWidth = size * .045; ctx.lineCap = "round";
+  const cx = size / 2, by = size * .8;
+  ctx.beginPath(); ctx.moveTo(cx - size * .17, by - size * .1); ctx.lineTo(cx + size * .17, by + size * .1); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx + size * .17, by - size * .1); ctx.lineTo(cx - size * .17, by + size * .1); ctx.stroke();
+  ctx.lineCap = "butt";
+}
+
+function drawBloodArt(ctx, size, seedStr, h) {
+  const g = ctx.createLinearGradient(0, 0, 0, size);
+  g.addColorStop(0, "#150000"); g.addColorStop(.55, "#3A0000"); g.addColorStop(1, "#000000");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, size, size);
+  const cx = size * .5, cy = size * .38;
+  const splat = ctx.createRadialGradient(cx, cy, size * .02, cx, cy, size * .3);
+  splat.addColorStop(0, "#C41E1E"); splat.addColorStop(.6, "#8B0000"); splat.addColorStop(1, "rgba(139,0,0,0)");
+  ctx.fillStyle = splat; ctx.beginPath(); ctx.arc(cx, cy, size * .3, 0, Math.PI * 2); ctx.fill();
+  // satellite splatter droplets
+  const rnd = seededRand(h);
+  ctx.fillStyle = "#8B0000";
+  for (let i = 0; i < 9; i++) { const a = rnd() * Math.PI * 2, r = size * (.22 + rnd() * .22), dx = cx + Math.cos(a) * r, dy = cy + Math.sin(a) * r * .8, ds = size * (.015 + rnd() * .03);
+    ctx.beginPath(); ctx.arc(dx, dy, ds, 0, Math.PI * 2); ctx.fill(); }
+  // drips running down
+  ctx.fillStyle = "#7A0000";
+  for (let d = 0; d < 5; d++) { const dx = cx + (d - 2) * size * .09 + (rnd() - .5) * size * .04, topY = cy + size * .16, len = size * (.12 + rnd() * .22), w = size * (.02 + rnd() * .012);
+    ctx.beginPath(); ctx.moveTo(dx - w, topY); ctx.lineTo(dx + w, topY);
+    ctx.quadraticCurveTo(dx + w * .6, topY + len * .7, dx, topY + len); ctx.quadraticCurveTo(dx - w * .6, topY + len * .7, dx - w, topY); ctx.closePath(); ctx.fill(); }
+  // bled-through initial
+  const letter = (seedStr.trim()[0] || "V").toUpperCase();
+  ctx.fillStyle = "rgba(255,80,80,0.9)"; ctx.font = `900 ${size * .22}px Georgia, serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(letter, cx, cy + size * .01);
+  ctx.strokeStyle = "#4A0000"; ctx.lineWidth = size * .05;
+  ctx.beginPath(); ctx.arc(size / 2, size / 2, size * .47, 0, Math.PI * 2); ctx.stroke();
+}
+
+function drawBiohazardArt(ctx, size, h) {
+  const g = ctx.createRadialGradient(size * .5, size * .5, size * .02, size * .5, size * .5, size * .7);
+  g.addColorStop(0, "#0C1A00"); g.addColorStop(1, "#000500");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, size, size);
+  // toxic glow
+  const glow = ctx.createRadialGradient(size * .5, size * .5, size * .05, size * .5, size * .5, size * .45);
+  glow.addColorStop(0, "rgba(57,255,20,0.35)"); glow.addColorStop(1, "rgba(57,255,20,0)");
+  ctx.fillStyle = glow; ctx.fillRect(0, 0, size, size);
+  // hazard-yellow/black diagonal stripe ring border
+  ctx.save(); ctx.beginPath(); ctx.arc(size / 2, size / 2, size * .46, 0, Math.PI * 2); ctx.clip();
+  ctx.fillStyle = "#1A1400"; ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = "#F2D000"; ctx.lineWidth = size * .05;
+  for (let s = -size; s < size * 2; s += size * .14) { ctx.beginPath(); ctx.moveTo(s, size); ctx.lineTo(s + size, 0); ctx.stroke(); }
+  ctx.restore();
+  ctx.fillStyle = "#000000"; ctx.beginPath(); ctx.arc(size / 2, size / 2, size * .38, 0, Math.PI * 2); ctx.fill();
+  // radiation trefoil — three blades rotated 120° apart
+  const cx = size / 2, cy = size / 2, rot0 = (h % 12) * (Math.PI / 6);
+  ctx.fillStyle = "#39FF14";
+  ctx.beginPath(); ctx.arc(cx, cy, size * .06, 0, Math.PI * 2); ctx.fill();
+  for (let b = 0; b < 3; b++) {
+    const a0 = rot0 + b * (Math.PI * 2 / 3) - Math.PI / 6, a1 = rot0 + b * (Math.PI * 2 / 3) + Math.PI / 6;
+    ctx.beginPath(); ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, size * .06, a0, a1); ctx.lineTo(cx + Math.cos((a0 + a1) / 2) * size * .3, cy + Math.sin((a0 + a1) / 2) * size * .3);
+    ctx.closePath();
+    ctx.beginPath(); ctx.moveTo(cx + Math.cos(a0) * size * .06, cy + Math.sin(a0) * size * .06);
+    ctx.arc(cx, cy, size * .3, a0, a1); ctx.arc(cx, cy, size * .06, a1, a0, true); ctx.closePath(); ctx.fill();
+  }
+  ctx.strokeStyle = "#39FF14"; ctx.lineWidth = size * .012; ctx.beginPath(); ctx.arc(size / 2, size / 2, size * .38, 0, Math.PI * 2); ctx.stroke();
+}
+
+function drawGasMaskArt(ctx, size, h) {
+  const g = ctx.createLinearGradient(0, 0, 0, size);
+  g.addColorStop(0, "#141414"); g.addColorStop(1, "#000000");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = "#F2D000"; ctx.lineWidth = size * .018; ctx.setLineDash([size * .03, size * .025]);
+  ctx.beginPath(); ctx.arc(size / 2, size / 2, size * .44, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+  const cx = size / 2, cy = size * .48, rubber = "#262A26", rubberHi = "#3A403A";
+  // face shell
+  ctx.fillStyle = rubber;
+  ctx.beginPath(); ctx.ellipse(cx, cy, size * .27, size * .3, 0, 0, Math.PI * 2); ctx.fill();
+  // eye lenses
+  const lensG = ctx.createRadialGradient(cx - size * .1, cy - size * .06, size * .01, cx - size * .1, cy - size * .02, size * .08);
+  lensG.addColorStop(0, "#8FBF8F"); lensG.addColorStop(1, "#1A2A1A");
+  ["l", "r"].forEach((side) => {
+    const lx = side === "l" ? cx - size * .11 : cx + size * .11;
+    ctx.fillStyle = "#0E120E"; ctx.beginPath(); ctx.arc(lx, cy - size * .03, size * .095, 0, Math.PI * 2); ctx.fill();
+    const lg = ctx.createRadialGradient(lx - size * .02, cy - size * .06, size * .01, lx, cy - size * .03, size * .09);
+    lg.addColorStop(0, "#7FAF7F"); lg.addColorStop(1, "#12200F");
+    ctx.fillStyle = lg; ctx.beginPath(); ctx.arc(lx, cy - size * .03, size * .075, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = rubberHi; ctx.lineWidth = size * .018; ctx.beginPath(); ctx.arc(lx, cy - size * .03, size * .095, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.beginPath(); ctx.ellipse(lx - size * .025, cy - size * .07, size * .018, size * .01, -.4, 0, Math.PI * 2); ctx.fill();
+  });
+  // nose/filter bridge
+  ctx.fillStyle = rubber; ctx.beginPath(); ctx.ellipse(cx, cy + size * .1, size * .06, size * .05, 0, 0, Math.PI * 2); ctx.fill();
+  // filter canister (side, position varies by hash)
+  const side = h % 2 === 0 ? 1 : -1, fx = cx + side * size * .27, fy = cy + size * .12;
+  ctx.fillStyle = "#1C1E1C"; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(fx - size * .07, fy - size * .05, size * .14, size * .18, size * .03) : ctx.rect(fx - size * .07, fy - size * .05, size * .14, size * .18); ctx.fill();
+  ctx.strokeStyle = "#F2D000"; ctx.lineWidth = size * .01;
+  ctx.beginPath(); ctx.moveTo(fx - size * .07, fy + size * .03); ctx.lineTo(fx + size * .07, fy + size * .03); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(fx - size * .07, fy + size * .09); ctx.lineTo(fx + size * .07, fy + size * .09); ctx.stroke();
+  // straps
+  ctx.strokeStyle = rubberHi; ctx.lineWidth = size * .03;
+  ctx.beginPath(); ctx.moveTo(cx - size * .26, cy - size * .12); ctx.quadraticCurveTo(cx, cy - size * .32, cx + size * .26, cy - size * .12); ctx.stroke();
+}
+
+function generatedArt(seedStr, size = 200, styleOverride) {
+  const style = styleOverride || currentArtStyle;
+  const key = style + "|" + seedStr + "@" + size;
+  if (artCache.has(key)) return artCache.get(key);
+  const canvas = document.createElement("canvas"); canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  const h = hashNum(seedStr);
+  if (style === "skull") drawSkullArt(ctx, size, h);
+  else if (style === "blood") drawBloodArt(ctx, size, seedStr, h);
+  else if (style === "biohazard") drawBiohazardArt(ctx, size, h);
+  else if (style === "gasmask") drawGasMaskArt(ctx, size, h);
+  else drawSigilArt(ctx, size, seedStr, h);
   const url = canvas.toDataURL("image/png");
   artCache.set(key, url);
   return url;
@@ -155,6 +675,20 @@ async function walkDirectory(dirHandle, extRegex, onProgress) {
   await walk(dirHandle, "");
   return found;
 }
+
+/* ---------------------------------------------------------------------
+   Recognized audio file extensions — the single source of truth for
+   which files count as "a song" anywhere files are scanned (main
+   library folder scan, DJ Mode's folder scan, the <input webkitdirectory>
+   fallback picker). Deliberately broad: covers every mainstream audio
+   container/codec a user is likely to have on device, not just the
+   handful iTunes/Spotify default to, so nothing gets silently skipped
+   during a folder scan just because its extension wasn't on a short
+   allowlist. Whether a given file then actually *plays* still depends on
+   the browser/OS having a decoder for its codec — playSong below now
+   catches that case and skips forward with a toast instead of just
+   silently stalling. */
+const AUDIO_EXT = /\.(mp3|mp2|m4a|m4b|m4p|m4r|aac|wav|wave|flac|ogg|oga|ogx|opus|weba|webm|wma|aiff|aif|aifc|amr|mka|caf|3gp|3g2|3ga|spx|ape|mpc|tta|wv|au|snd|mid|midi)$/i;
 
 /* ---------------------------------------------------------------------
    Small canvas-drawing helpers mirroring the Android Canvas/Paint API
@@ -1074,12 +1608,14 @@ const GlobeTitle = (function () {
    Public export
    --------------------------------------------------------------------- */
 global.VV = {
-  idbGet, idbSet, idbDelete, idbGetAll, idbGetAllKeys, idbPut,
+  idbGet, idbSet, idbDelete, idbGetAll, idbGetAllKeys, idbGetAllEntries, idbPut,
+  openDB,
   FONTS, applyFont,
-  fsApiSupported, verifyPermission, pickDirectory, getStoredHandle, walkDirectory,
+  fsApiSupported, verifyPermission, pickDirectory, getStoredHandle, walkDirectory, AUDIO_EXT,
   ThemeEngine, PixieDust, BookTransition, GlobeTitle,
   C, linGrad, radGrad, fillGrad,
-  generatedArt, hashStr,
+  generatedArt, hashStr, setArtStyle, getArtStyle, ART_STYLES, drawSkullIcon,
+  resizeImageFileToDataUrl, extractRawPictureBlob, getEmbeddedArtForFile,
 };
 
 })(window);

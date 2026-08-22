@@ -5,9 +5,23 @@
    ========================================================================= */
 (() => {
 "use strict";
-const { idbGet, idbSet, idbDelete, idbGetAllKeys, fsApiSupported, verifyPermission, pickDirectory, getStoredHandle, walkDirectory, generatedArt, C, linGrad, radGrad } = window.VV;
+const { idbGet, idbSet, idbDelete, idbGetAllKeys, fsApiSupported, verifyPermission, pickDirectory, getStoredHandle, walkDirectory, generatedArt, AUDIO_EXT, C, linGrad, radGrad } = window.VV;
 
-const AUDIO_EXT = /\.(mp3|m4a|aac|wav|ogg|oga|flac|opus|weba|webm)$/i;
+/** Same art priority as the main library: a custom uploaded photo, then
+ *  the song's own embedded cover (cached in IndexedDB the first time the
+ *  main library scanned it — see loadEmbeddedArt in app.js), then the
+ *  generated placeholder. DJ Mode doesn't re-scan files for embedded art
+ *  itself; it just reuses whatever the main app already found. */
+async function deckArtUrl(song) {
+  try {
+    const custom = await idbGet("customArt", song.id);
+    if (custom) return custom;
+    const embedded = await idbGet("embeddedArt", song.id);
+    if (embedded) return embedded;
+  } catch { /* fall back below */ }
+  return generatedArt(song.title + song.artist + song.id, 120);
+}
+
 function titleCaseFromFilename(name) {
   const noExt = name.replace(AUDIO_EXT, "");
   const cleaned = noExt.replace(/[_]+/g, " ").trim();
@@ -32,7 +46,10 @@ const Visualizer = (() => {
   let canvas, ctx, W = 0, H = 0, raf = null, lastFrame = 0, globalTime = 0;
   let energy = 0, beatPulse = 0, theme = 0, initialized = false;
 
-  const PARTICLE_COUNT = 60, RING_COUNT = 5, BAR_COUNT = 48, LASER_COUNT = 6;
+  const PARTICLE_COUNT = 40, RING_COUNT = 5, BAR_COUNT = 48, LASER_COUNT = 6;
+  // Global intensity dial — keeps the visualizer feeling alive as a full-page
+  // backdrop without ever fighting the glass cards for attention.
+  const INTENSITY = 0.55;
   let px = [], py = [], pvx = [], pvy = [], pSize = [], pAlpha = [], pColor = [];
   let ringR = [], ringA = [], ringSpeed = [];
   let barH = [], barTarget = [];
@@ -48,7 +65,7 @@ const Visualizer = (() => {
     pvx[i] = (rand() - .5) * speed;
     pvy[i] = -.5 - rand() * speed;
     pSize[i] = 2 + rand() * 5;
-    pAlpha[i] = .4 + rand() * .6;
+    pAlpha[i] = (.4 + rand() * .6) * INTENSITY;
     const colors = [pal[1], pal[2], pal[3]];
     pColor[i] = colors[Math.floor(rand() * 3)];
   }
@@ -70,7 +87,7 @@ const Visualizer = (() => {
   }
 
   function drawGrid(pal) {
-    ctx.strokeStyle = C(pal[1], 18 / 255); ctx.lineWidth = .5;
+    ctx.strokeStyle = C(pal[1], (18 / 255) * INTENSITY); ctx.lineWidth = .5;
     const cols = 12, rows = 20, cw = W / cols, rh = H / rows;
     const yOff = (globalTime * 30) % rh;
     for (let r = 0; r <= rows + 1; r++) { ctx.beginPath(); ctx.moveTo(0, r * rh - yOff); ctx.lineTo(W, r * rh - yOff); ctx.stroke(); }
@@ -82,9 +99,9 @@ const Visualizer = (() => {
       laserAngle[i] += laserSpeed[i] * (1 + energy * 3);
       const endX = cx + Math.cos(laserAngle[i]) * W, endY = cy + Math.sin(laserAngle[i]) * H;
       const lc = i % 3 === 0 ? pal[1] : i % 3 === 1 ? pal[2] : pal[3];
-      const a = laserAlpha[i] * (.5 + energy * .5);
+      const a = laserAlpha[i] * (.5 + energy * .5) * INTENSITY;
       ctx.strokeStyle = linGrad(ctx, cx, cy, endX, endY, [C(lc, a), C(lc, 0)]);
-      ctx.lineWidth = 1 + energy * 2 + beatPulse * 3;
+      ctx.lineWidth = (1 + energy * 2 + beatPulse * 3) * INTENSITY;
       ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(endX, endY); ctx.stroke();
     }
   }
@@ -92,8 +109,8 @@ const Visualizer = (() => {
     const cx = W / 2, cy = H * .38, maxR = Math.min(W, H) * (.5 + energy * .3 + beatPulse * .2);
     for (let i = 0; i < RING_COUNT; i++) {
       ringR[i] += ringSpeed[i] * (1 + energy * 4);
-      if (ringR[i] > maxR) { ringR[i] = 10; ringA[i] = .8; }
-      const t = ringR[i] / maxR; ringA[i] = Math.max(0, (1 - t) * .7);
+      if (ringR[i] > maxR) { ringR[i] = 10; ringA[i] = .8 * INTENSITY; }
+      const t = ringR[i] / maxR; ringA[i] = Math.max(0, (1 - t) * .7 * INTENSITY);
       const rc = i % 3 === 0 ? pal[1] : i % 3 === 1 ? pal[2] : pal[3];
       ctx.strokeStyle = C(rc, ringA[i]); ctx.lineWidth = 1.5 + energy * 3;
       ctx.beginPath(); ctx.arc(cx, cy, ringR[i], 0, Math.PI * 2); ctx.stroke();
@@ -341,6 +358,7 @@ async function loadDeck(letter, song) {
   ui.title.textContent = song.title;
   ui.artist.textContent = song.artist;
   ui.art.innerHTML = `<img src="${generatedArt(song.title + song.artist + song.id, 120)}" alt="">`;
+  deckArtUrl(song).then((url) => { if (deck.song === song) ui.art.innerHTML = `<img src="${url}" alt="">`; });
   updatePlayCountBadge(song, ui.count);
   setStatus(letter === "A" ? "⚔ LOADING DECK A..." : "◈ LOADING DECK B...");
 

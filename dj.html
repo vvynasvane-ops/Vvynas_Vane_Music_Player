@@ -4,16 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
 <title>DJ Mode — Vvynas Vane</title>
-<meta name="theme-color" content="#020408">
+<meta name="theme-color" content="#000000">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link rel="icon" href="favi.jpeg">
 <link rel="stylesheet" href="style.css">
 <style>
-  body { overflow-y: auto; overflow-x: hidden; background: #020408; font-family: 'Courier New', ui-monospace, monospace; }
+  body { overflow-y: auto; overflow-x: hidden; background: #000000; font-family: 'Courier New', ui-monospace, monospace; }
   #djVisualizer { position: fixed; inset: 0; z-index: 0; }
-  #djScrim { position: fixed; inset: 0; z-index: 1; pointer-events: none; background: linear-gradient(180deg, rgba(2,4,8,.55) 0%, rgba(2,4,8,.25) 30%, rgba(2,4,8,.65) 100%); }
+  #djScrim { position: fixed; inset: 0; z-index: 1; pointer-events: none; background: linear-gradient(180deg, rgba(2,4,8,.4) 0%, rgba(2,4,8,.12) 30%, rgba(2,4,8,.12) 70%, rgba(2,4,8,.45) 100%); }
   #djWrap { position: relative; z-index: 2; max-width: 720px; margin: 0 auto; padding: calc(14px + env(safe-area-inset-top,0px)) 14px calc(60px + env(safe-area-inset-bottom,0px)); }
 
   .dj-topbar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
@@ -23,7 +23,15 @@
   .dj-title-block h1 { font-size: 15px; letter-spacing: .1em; margin: 0; color: #00FFD4; text-shadow: 0 0 12px rgba(0,255,212,.5); }
   .dj-status { font-size: 10.5px; color: #8ab; letter-spacing: .06em; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-  .dj-card { background: rgba(10,10,18,.72); border: 1px solid rgba(255,255,255,.12); border-radius: 16px; padding: 16px; margin-bottom: 14px; backdrop-filter: blur(3px); }
+  .dj-card {
+    background: rgba(0,0,0,.45); border: 1px solid rgba(255,255,255,.1); border-radius: 16px; padding: 16px; margin-bottom: 14px;
+    backdrop-filter: blur(14px) saturate(1.15); -webkit-backdrop-filter: blur(14px) saturate(1.15);
+    box-shadow: 0 8px 32px rgba(0,0,0,.35);
+  }
+  /* Legibility layer: text sits on the glass cards above a moving background,
+     so every label gets a soft shadow rather than a flat opaque panel. */
+  .dj-card, .dj-topbar, .queue-row, #shoutoutText { text-shadow: 0 1px 4px rgba(0,0,0,.7); }
+  .deck-meta .t, .deck-meta .a, .dj-status, .mixer-labels, .bass-label-row span, .deck-label { text-shadow: 0 1px 4px rgba(0,0,0,.8); }
   .dj-decks { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   @media (max-width: 520px) { .dj-decks { grid-template-columns: 1fr; } }
 

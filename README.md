@@ -3,7 +3,8 @@
 A web replica of the Vvynas Vane Android music player: your local song
 library, playlists (with rename/sort/multi-select-remove), a default
 Recently Played playlist, an editable up-next queue, favorites, folders,
-custom RGB accent colors, monthly/yearly recap, a video player with
+custom RGB accent colors, hazard-themed album art, an opt-in "Rage Mode"
+audio-reactive skin, monthly/yearly recap, a video player with
 search/subtitles/multi-language audio, DJ Mode, and a full-screen player
 with 42 animated backgrounds — all running in the browser. No file is
 ever uploaded; everything plays straight from the folder you grant access
@@ -17,8 +18,8 @@ video.html   Video + M4A player — search, subtitles, multi-audio-track support
 recap.html   Monthly & yearly listening recap, purple starry theme + poster download
 dj.html      DJ Mode — dual decks, crossfader, bass boost, 4 visualizer themes
 shared.js    IndexedDB, 8-font manager, storage access, 42 animated themes,
-             pixie dust, book-page transition, orbiting globe title, sigil art
-app.js       Library page logic
+             pixie dust, book-page transition, orbiting globe title, album art
+app.js       Library page logic + Rage Mode
 video.js     Video page logic
 recap.js     Recap page logic
 dj.js        DJ Mode logic + visualizer
@@ -29,7 +30,7 @@ manifest.json / sw.js   PWA install + offline app shell
 ## Running it
 
 Serve over **HTTPS or `localhost`** — a browser requirement for the
-storage-access and install features, not something specific to this app.
+storage-access and install features.
 
 ```bash
 cd vvynas-vane-web
@@ -37,133 +38,125 @@ python3 -m http.server 8080
 # open http://localhost:8080
 ```
 
-To deploy for real (so "Add to Home Screen" works everywhere), push this
-folder to GitHub Pages, Netlify, Vercel, or any static host — no build
-step required.
+## Core features
 
-## Features
+- **Library**: search + sort, folders, favorites, up-next queue, a default
+  Recently Played playlist, playlist rename/select-all/bulk-remove,
+  generated album art, shuffle/repeat, full-screen player with
+  lock-screen media controls.
+- **42 animated backgrounds** ported from `AnimatedThemeView.java`, pixie
+  dust, a storybook page-turn transition, and an orbiting globe title.
+- **8-font customization** and **custom RGB accent colors** (Settings).
+- **Album art styles** (Settings → Album Art Style): the default gold
+  sigil, plus four hazard-themed alternates — Skeleton Hazard, Vicious
+  Blood, Chernobyl Vybz (radiation trefoil), and Gas Mask — each with its
+  own lit/shaded rendering (a directional highlight-to-shadow gradient and
+  specular glints, not flat color fills). Fixed a bug where switching
+  styles here didn't actually change the art on screen — `app.js` had its
+  own duplicate, sigil-only art generator that shadowed the real one in
+  `shared.js`; it now always goes through the shared generator, so style
+  changes apply immediately everywhere (library rows, mini-player, full
+  player, lock-screen artwork).
+- **Custom album art per song** (full player → pencil icon on the
+  artwork): pick a photo straight from device storage to use as that
+  song's cover instead of the generated art. Any size or aspect ratio
+  goes in — it's automatically center-cropped to a square and resized to
+  512x512 so it displays correctly and consistently everywhere art shows
+  up (library rows, mini-player, full player, lock-screen controls),
+  same as the generated styles above. Stored on-device (IndexedDB), so
+  it's still there next time you open the app; a second button next to
+  the pencil resets a song back to its generated art. 8MB cap per photo,
+  nothing ever leaves your device.
+- **Monthly & yearly recap**, **video player** with subtitles/multi-
+  language audio, and **DJ Mode** — see the sections below.
 
-- **Library**: search + sort by title/artist/album/duration/size/year/date
-  added/play count. Folders, Playlists, Favorites, generated per-song gold
-  sigil art, shuffle/repeat, full-screen player with lock-screen media
-  controls.
-- **Up-next queue**: every song row has a queue icon to add it right after
-  the currently playing track. The Up Next sheet has a remove (✕) button
-  per queued track.
-- **Recently Played** — a default, always-present system playlist that
-  records every song you play, reachable from the sidebar or a pinned
-  card at the top of Playlists.
-- **Playlists**: create, rename, delete, and select-all + bulk-remove
-  songs from any playlist, Favorites, or Recently Played.
-- **42 animated backgrounds**, ported theme-by-theme from
-  `AnimatedThemeView.java`, plus pixie-dust tap sparkles, a storybook
-  page-turn transition, and an orbiting globe-title wordmark.
-- **8-font customization** (Settings → Font), applied live app-wide.
-- **Custom RGB accent colors** (Settings → Custom Colors) — see below.
-- **Monthly & yearly recap** (`recap.html`): purple-starry screen matching
-  `RecapActivity`'s own palette, with a downloadable poster.
-- **Video player** (`video.html`) — search, subtitles, and multi-language
-  audio; see below for details.
-- **DJ Mode** (`dj.html`): dual decks, real crossfader, bass boost, Auto
-  Mix, Beat Sync, play-count shoutouts, a battle queue, and 4 beat-reactive
-  visualizer themes running as a true full-page background — ported from
-  `DJModeActivity.java` / `DJVisualizer.java`.
-- **Connecting overlay**: an hourglass loader with cycling status text
-  while granting/resuming folder access.
-- **Installable**: manifest + service worker power "Add to Home Screen,"
-  available from the sidebar/Settings — not pushed on first load.
-- **Dark mode**: true near-black (`#000000`/`#050505`/`#0B0B0B`) across the
-  whole app.
-- **Responsive**: sidebar + wide player on tablet/laptop, bottom tab bar +
-  compact player on phones.
+## Rage Mode (Settings → 🔥 Rage Mode)
 
-## Button visibility & custom colors
+An alternate, **opt-in** full-app skin built from your concert-atmosphere
+and "Demon's Den" briefs — audio-reactive, not just decorative:
 
-Every functional icon button across the app — like/up-next/⋮ on song
-rows, the mini-player and full-player controls, sidebar/settings buttons,
-video controls, select-all/remove toolbars — now carries a permanent
-subtle background so it's identifiable at a glance instead of only
-appearing on hover. The like/up-next/more icons specifically also moved
-from a muted to a stronger base color for extra clarity.
+- **Real audio reactivity**: a Web Audio `AnalyserNode` taps the actual
+  playing track (not a canned animation) and drives everything below off
+  its real bass energy.
+- **Ember/pyro field + heat glow**, concentrated low-center like coals or
+  stage light, with a heavy vignette at the edges.
+- **"Demon's Den" backdrop**: rusted hanging chains that sway with the
+  bass, a toxic-green pool with a half-submerged skull, glowing eye-pairs
+  lurking in the dark corners, and a faint ruined-skyline silhouette
+  (cooling towers + a distant ferris wheel) fading into the fog.
+- **Blood drips covering much more of the screen, at a real-world 0.5–1cm
+  width**: 16 thick hanging strands (each reaching well down into the
+  viewport, not just a short band at the top) plus 55 continuous streaks
+  that endlessly roll from just above the top edge all the way past the
+  bottom, staggered so the "rain" never stops and never lines up. Every
+  strand still has the glossy light/dark reflection streak down its length.
+- **Drip Effect picker** (Settings → Drip Effect, only in Rage Mode):
+  choose **Blood** (default, red), **Chemical** (toxic green ooze with
+  drifting smoke curling up behind it), or **Off** to turn the drip layer
+  off entirely. Same geometry and continuous-roll animation either way —
+  only the substance (and, for Chemical, the smoke) changes.
+- **Selectable background image** (Settings → 🖼 Background Image): four
+  full-screen images you can pick between — two Chernobyl-style atomic
+  wastelands and two lava/hell caverns — plus an **Upload Photo** tile
+  that opens your device's file picker so you can use your own image
+  instead. Shows in every mode — Light, Dark, and Rage — not just while
+  Rage Mode is on. While Rage Mode is on, picking an image also makes the
+  ember/eyes canvas wash translucent instead of drawing its own opaque
+  den floor, so the image shows through underneath with the
+  drips/embers/eyes layered on top exactly as before; in Light or Dark
+  mode the image simply replaces the normal animated theme background.
+  Picking "None (default)" goes back to the built-in Demon's Den scene in
+  Rage Mode, or the normal animated theme background in Light/Dark mode.
+  An uploaded photo is stored on-device (IndexedDB) so it's still there
+  next time you open the app, shows up as its own "My Photo" tile you can
+  reselect or remove (✕), and re-uploading replaces it. Capped at 8MB per
+  photo; nothing is ever uploaded anywhere off your device.
+- **Screen-impact shake + flash burst** on real bass drops/onsets.
+- **Crowd-chant flavor text** replacing the sidebar's usual line
+  ("BASS INCOMING", "MOSH PIT ACTIVE", etc.) while active.
+- **Heart-pulse wordmark**: a stylized pulsing heart with an ECG trace
+  replaces the rotating globe title while Rage Mode is on.
+- **Glitch intro**: a ~1.8s corrupted-transmission effect (RGB channel
+  split, scanline sweep, static noise, screen tears) plays once, the
+  moment you switch Rage Mode **on** — not on every cold app load.
+- App chrome (sidebar, mini-player, tab bar) turns into translucent glass
+  panels while active so the scene shows through everywhere, not just the
+  player screen.
 
-Settings → **Custom Colors** adds two RGB pickers (native color inputs):
-**Accent color** and **Highlight color**, replacing the default Westeros
-gold/crimson anywhere `--accent`/`--accent2` (and their derived shades —
-buttons, active states, the seek bar, sigil-art glow, etc.) are used
-across the library and video pages. Changes apply live and persist; a
-"Reset to Westeros Gold" button reverts to the originals. DJ Mode and
-Recap intentionally keep their own distinct built-in palettes (Iron
-Throne war-console neon / purple starry) rather than inheriting this, the
-same way they don't inherit the 42 animated library themes.
-
-## Video playback & subtitles (`video.html`)
-
-**Search.** A live search bar filters the Video Files / M4A Files lists
-instantly by filename. Press **/** to focus it, **Esc** to clear it.
-
-**MKV support.** Every file is re-wrapped in a `Blob` with the correct
-MIME type before playback (browsers/OSes frequently mis-detect `.mkv`),
-which fixes playback for the large majority of real-world MKV rips. If a
-video track still can't be decoded (usually HEVC/H.265), the player
-detects and explains that directly instead of leaving a silent black
-screen with audio-only playback.
-
-**Subtitles — auto-detected, with language recognition.** Drop `.srt`/
-`.vtt` files next to a video with a matching filename and they're
-auto-detected the moment you play it. Language-tagged filenames
-(`Movie.en.srt`, `Movie.fr.srt`, etc. — 20 common codes/names) are
-recognized, and English is auto-selected first if present. Press **V**
-anytime to cycle subtitle languages (the same convention VLC uses); the
-**CC** button opens a picker.
-
-**Multi-language audio, with an English recommendation.** Uses the native
-`audioTracks` API (Chrome/Edge/Opera). If a file has multiple audio
-tracks and one is English, it's switched to automatically with a toast
-explaining what happened; otherwise you're prompted to choose via the
-**AUD** button.
+**Scoping notes, on purpose:**
+- This plays **only when you turn it on** in Settings, not automatically
+  for every visitor on first load. A forced, unavoidable intense-horror
+  intro for anyone who opens what's still fundamentally a music app isn't
+  something I wanted to ship as the default — Rage Mode being opt-in was
+  the one place I pushed back on the brief as given.
+- Everything is stylized canvas/CSS illustration (flat shading, gradients,
+  specular highlights) — not the hyper-realistic/8K photorealistic
+  imagery described in the brief. That's a hard ceiling of what canvas
+  drawing can produce (there's no image-generation tool wired into this
+  build), and it's also a deliberate choice: extremely graphic
+  photorealistic gore isn't something I wanted to push toward even
+  through prompt-engineering-style descriptions.
+- The heart-pulse wordmark is a simplified, stylized glyph — not the
+  anatomical, severed-vessel imagery described — for the same reason,
+  since it replaces a piece of permanent UI chrome.
 
 ## DJ Mode (`dj.html`)
 
-A full port of `DJModeActivity.java` + `DJVisualizer.java` — dual decks
-each on their own Web Audio graph, a constant-power crossfader, an
-808/bass-boost low-shelf filter, per-deck pitch control, Auto Mix, Beat
-Sync, the original Game-of-Thrones-flavored play-count shoutouts, a
-battle queue, and 4 beat-reactive visualizer themes (DRAGONFIRE /
-LANNISTER / STARK WINTER / NIGHT KING) running as a true full-page
-background behind glass-panel cards.
+A full port of `DJModeActivity.java` + `DJVisualizer.java` — dual decks,
+constant-power crossfader, 808/bass-boost filter, pitch control, Auto Mix,
+Beat Sync, play-count shoutouts, a battle queue, and 4 beat-reactive
+visualizer themes running as a full-page background behind glass cards.
 
-Reachable from the sidebar, the Settings modal, or directly at `dj.html`.
+## Video playback & subtitles (`video.html`)
 
-## Fix log
-
-- Removed the "Add to Home Screen" prompt from first-load onboarding.
-- Added hourglass/orbit/track/dot loaders in fitting spots across the app.
-- Fixed a mobile tab-bar visibility bug after resize/rotation.
-- Fixed folder-picker cancellation during a rescan stranding you on the
-  "Grant Access" screen.
-- Fixed a double-binding bug on every "Grant Access" button that could pop
-  an unwanted folder picker when resuming access.
-- Fixed MKV files frequently failing to show video (playing audio only) by
-  correcting MIME-type detection.
-- Added subtitle support with automatic sibling-file + language detection,
-  SRT→VTT conversion, a "V" keyboard shortcut, and a CC picker.
-- Added multi-language audio-track detection with an automatic English
-  preference and an AUD picker for manual selection.
-- Added live search to the video page, with `/` and `Esc` shortcuts.
-- Tuned DJ Mode's visualizer to run as a true full-page background with
-  glass-panel cards and reduced animation intensity.
-- Pushed dark mode to true near-black across the whole app.
-- Added an up-next queue-add action per song, a default Recently Played
-  playlist, playlist rename, and select-all/bulk-remove across playlists,
-  Favorites, and Recently Played.
-- Gave every functional button a permanent, always-visible background
-  instead of relying on hover, and boosted the like/up-next/more icon
-  colors specifically.
-- Added custom RGB accent-color pickers in Settings, applied live across
-  the library and video pages, with a one-tap reset to the defaults.
+Live search; MKV playback fixed via correct MIME-type wrapping with a
+clear in-app explanation when a codec (usually HEVC) genuinely can't be
+decoded; auto-detected, language-aware subtitles (SRT→VTT, a **V** key to
+cycle languages, a CC picker); multi-language audio-track detection with
+an automatic English preference and an AUD picker.
 
 ## Still simplified
 
-The lyrics view and ID3-embedded album art (this still uses generated
-sigil art) aren't in this pass — say the word and they can be ported next
-the same way, straight from the source.
+The lyrics view and automatic ID3-embedded album art extraction aren't
+in this pass — songs still default to generated art unless you manually
+upload a photo per-song (see "Custom album art per song" above).
