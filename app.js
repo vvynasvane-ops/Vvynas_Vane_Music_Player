@@ -45,7 +45,7 @@ const state = {
   repeat: "off",         // off | all | one
   isPlaying: false,
   addToPlaylistTargetId: null,
-  settings: { light: false, resume: true, fontStyle: 0, themeId: "none", accentColor: "#C9A84C", accent2Color: "#B22222", artStyle: "sigil", rageMode: false, rageBackground: "none", rageDripType: "smoke", overlayStrength: 55 },
+  settings: { light: false, resume: true, fontStyle: 0, themeId: "none", accentColor: "#C9A84C", accent2Color: "#B22222", artStyle: "sigil", rageMode: false, rageBackground: "none", rageDripType: "smoke", overlayStrength: 55, songListOverlay: 40 },
   usingFSApi: false,
   fileRefs: new Map(),   // songId -> File or FileSystemFileHandle
   objectUrl: null,
@@ -152,9 +152,20 @@ const els = {
   settingsRescanBtn: $("#settingsRescanBtn"),
   overlayStrengthInput: $("#overlayStrengthInput"),
   overlayStrengthValue: $("#overlayStrengthValue"),
+  songListOverlayInput: $("#songListOverlayInput"),
+  songListOverlayValue: $("#songListOverlayValue"),
 
   iosModalOverlay: $("#iosModalOverlay"),
   closeIosModalBtn: $("#closeIosModalBtn"),
+
+  openThemeCarouselBtn: $("#openThemeCarouselBtn"),
+  themeCarouselOverlay: $("#themeCarouselOverlay"),
+  tcTrack: $("#tcTrack"),
+  tcPrevBtn: $("#tcPrevBtn"),
+  tcNextBtn: $("#tcNextBtn"),
+  tcCloseBtn: $("#tcCloseBtn"),
+  tcConfirmBtn: $("#tcConfirmBtn"),
+  tcCurrentLabel: $("#tcCurrentLabel"),
 
   toast: $("#toast"),
 };
@@ -317,13 +328,16 @@ const CUSTOM_BG_VIDEO_MAX_BYTES = 60 * 1024 * 1024; // 60MB cap — generous for
 let customBgVideoObjectUrl = null;
 
 /* ---------------------------------------------------------------------
-   Rage Mode ambience effect — what billows across the screen. "Intense
-   Smoke" (default) fills the screen with thick, dense, dark smoke;
-   "None" turns the effect off. There is no flame/fire or dripping
-   effect. Only relevant while Rage Mode is on (Settings → Ambience).
+   Rage Mode ambience effect — what billows/crackles across the screen.
+   "Intense Smoke" (default) fills the screen with thick, dense, dark
+   smoke; "Thunderstorm" replaces it with driving rain plus real jagged
+   lightning bolts that strike at random (see generateBolt() /
+   drawThunderstorm() in RageMode below); "None" turns the effect off.
+   Only relevant while Rage Mode is on (Settings → Ambience).
    --------------------------------------------------------------------- */
 const RAGE_DRIP_TYPES = [
   { id: "smoke", label: "💨 Intense Smoke" },
+  { id: "lightning", label: "⚡ Thunderstorm" },
   { id: "none", label: "Off" },
 ];
 let rageLineIdx = 0, rageLineTimer = null;
@@ -349,8 +363,9 @@ const RageMode = (() => {
   let embers = [], bassAvg = 0, bassRolling = 0.08, lastFlash = 0;
   let demonEyes = [], denSkulls = [], chains = [], toxicPool = null, denInitialized = false;
   let bgActive = false;
-  let smokeParticles = [], dripType = "smoke"; // dripType: "smoke" | "none"
-  const EMBER_COUNT = 70, SMOKE_COUNT = 20, SMOKE_COUNT_INTENSE = 46;
+  let smokeParticles = [], dripType = "smoke"; // dripType: "smoke" | "lightning" | "none"
+  let rainDrops = [], boltPath = null, boltAlpha = 0, boltFlicker = 0, boltTimer = 90;
+  const EMBER_COUNT = 70, SMOKE_COUNT = 20, SMOKE_COUNT_INTENSE = 46, RAIN_COUNT = 110;
 
   function resize() { if (!canvas) return; W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
 
@@ -390,6 +405,81 @@ const RageMode = (() => {
       g.addColorStop(0, `rgba(50,45,42,${a})`); g.addColorStop(0.6, `rgba(30,26,24,${a * 0.7})`); g.addColorStop(1, "rgba(20,16,15,0)");
       ctx.fillStyle = g; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
     });
+  }
+
+  function spawnRainDrop(d) {
+    d.x = Math.random() * (W + 200) - 100; d.y = -20 - Math.random() * H;
+    d.len = 16 + Math.random() * 26; d.speed = 9 + Math.random() * 8;
+    d.drift = -3.5 - Math.random() * 2; d.alpha = 0.14 + Math.random() * 0.22;
+  }
+  /** Rebuilds the rain particle pool for the "Thunderstorm" drip effect. */
+  function initRain() { rainDrops = Array.from({ length: RAIN_COUNT }, () => { const d = {}; spawnRainDrop(d); d.y = Math.random() * H; return d; }); }
+  /** Builds one jagged lightning-bolt path via recursive midpoint
+   *  displacement — start near the top of the screen, strike down toward
+   *  a random point in the lower half, with an optional shorter branch
+   *  forking off partway down. Returns { main: [[x,y],...], branches }. */
+  function jaggedPath(x1, y1, x2, y2, depth, spread) {
+    if (depth <= 0) return [[x1, y1], [x2, y2]];
+    const mx = (x1 + x2) / 2 + (Math.random() - 0.5) * spread;
+    const my = (y1 + y2) / 2;
+    const left = jaggedPath(x1, y1, mx, my, depth - 1, spread * 0.55);
+    const right = jaggedPath(mx, my, x2, y2, depth - 1, spread * 0.55);
+    return left.slice(0, -1).concat(right);
+  }
+  function generateBolt() {
+    const startX = W * (0.12 + Math.random() * 0.76);
+    const endX = startX + (Math.random() - 0.5) * W * 0.3;
+    const endY = H * (0.55 + Math.random() * 0.4);
+    const main = jaggedPath(startX, -10, endX, endY, 6, W * 0.14);
+    const branches = [];
+    const branchCount = Math.random() < 0.75 ? 1 : 2;
+    for (let b = 0; b < branchCount; b++) {
+      const bi = Math.floor(main.length * (0.25 + Math.random() * 0.4));
+      const [bx, by] = main[bi];
+      const bEndX = bx + (Math.random() - 0.5) * W * 0.18;
+      const bEndY = by + H * (0.12 + Math.random() * 0.12);
+      branches.push(jaggedPath(bx, by, bEndX, bEndY, 3, W * 0.06));
+    }
+    return { main, branches };
+  }
+  function strokeBoltPath(pts) {
+    ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.stroke();
+  }
+  /** "Thunderstorm" drip effect — driving rain plus real jagged lightning
+   *  bolts that strike the screen at random, branching and flickering,
+   *  paired with the existing bass-hit flash/shake for real thunder-clap
+   *  impact. Bolts strike more often the harder the track is hitting. */
+  function drawThunderstorm() {
+    if (!rainDrops.length) initRain();
+    const speedMul = 1 + bassAvg * 1.4;
+    ctx.lineCap = "round";
+    rainDrops.forEach(d => {
+      d.y += d.speed * speedMul; d.x += d.drift * 0.35;
+      if (d.y - d.len > H || d.x < -100) spawnRainDrop(d);
+      ctx.strokeStyle = `rgba(185,205,255,${d.alpha})`; ctx.lineWidth = 1.3;
+      ctx.beginPath(); ctx.moveTo(d.x, d.y); ctx.lineTo(d.x + d.drift, d.y + d.len); ctx.stroke();
+    });
+
+    boltTimer -= 1;
+    if (boltTimer <= 0 && boltAlpha <= 0.02) {
+      boltPath = generateBolt();
+      boltAlpha = 1; boltFlicker = 2;
+      triggerFlash(); shakeScreen(5 + bassAvg * 5);
+      boltTimer = Math.round((110 + Math.random() * 220) * (1 - bassAvg * 0.45));
+    }
+    if (boltAlpha > 0.02 && boltPath) {
+      ctx.save();
+      ctx.shadowColor = "rgba(200,225,255,0.9)"; ctx.shadowBlur = 20;
+      ctx.strokeStyle = `rgba(232,242,255,${boltAlpha})`; ctx.lineWidth = 2.6;
+      strokeBoltPath(boltPath.main);
+      ctx.strokeStyle = `rgba(200,220,255,${boltAlpha * 0.75})`; ctx.lineWidth = 1.4;
+      boltPath.branches.forEach(strokeBoltPath);
+      ctx.restore();
+      boltAlpha *= 0.78;
+      if (boltAlpha < 0.45 && boltFlicker > 0) { boltAlpha = Math.min(1, boltAlpha + 0.55); boltFlicker--; }
+    }
   }
 
   function initDenScene() {
@@ -526,9 +616,11 @@ const RageMode = (() => {
       ctx.fillStyle = glow; ctx.fill();
     });
 
-    // "Intense Smoke" fills the screen with dense, dark smoke. "None"
-    // draws nothing here.
+    // "Intense Smoke" fills the screen with dense, dark smoke.
+    // "Thunderstorm" draws rain + random lightning bolts. "None" draws
+    // nothing here.
     if (dripType === "smoke") drawSmoke();
+    else if (dripType === "lightning") drawThunderstorm();
 
     // final concentration pass — darker toward the edges, brightest low-center
     const vig = ctx.createRadialGradient(W / 2, H * 0.6, H * 0.25, W / 2, H * 0.6, H * 0.85);
@@ -643,12 +735,13 @@ const RageMode = (() => {
    *  underneath it — called from Settings whenever the Rage Background
    *  picker changes, and on load. */
   function setBackgroundActive(on) { bgActive = on; }
-  /** Switches the ambience effect — "smoke" (default, dense billowing
-   *  smoke) or "none" (effect off entirely). No flame/fire or dripping
-   *  effect exists. Called from Settings → Ambience. */
+  /** Switches the ambience effect — "smoke" (dense billowing smoke),
+   *  "lightning" (rain + random lightning bolts), or "none" (effect off
+   *  entirely). Called from Settings → Ambience. */
   function setDripType(type) {
     dripType = type;
     if (type === "smoke") initSmoke(true);
+    else if (type === "lightning") { if (!rainDrops.length) initRain(); }
     else if (!smokeParticles.length) initSmoke(false);
   }
   function init(canvasEl) {
@@ -1676,6 +1769,7 @@ function applySettingsToUI() {
   applyRageDripType();
   applyThemeVideo();
   applyOverlayStrength();
+  applySongListOverlay();
   RageMode.setActive(state.settings.rageMode);
   renderFontGrid();
   renderThemeGrid();
@@ -1895,6 +1989,131 @@ function applyThemeVideo() {
     layer.pause();
   }
 }
+/* ---------------------------------------------------------------------
+   "Spin to a Background" carousel — a coverflow-style alternative to
+   scrolling and clicking through the 42-theme grid. Cards sit in a ring
+   (index wraps end-to-end, so spinning past the last theme loops back
+   to the first, like slowly turning a small globe of previews) with the
+   centered card sharp and forward, and neighbors receding into a
+   shallow 3D arc to either side. The centered theme is previewed LIVE
+   behind the translucent shell as you browse — nothing is committed to
+   settings until "Use This Background" is tapped; closing without
+   confirming reverts to whatever was playing before the carousel opened.
+   --------------------------------------------------------------------- */
+const TC_THEME_EMOJI = {
+  none: "🚫", waves: "🌊", volcano: "🌋", sunset: "🌅", windmill: "🎐", waterfall: "💦", undersea: "🐠",
+  smoke: "💨", piano: "🎹", thinking: "🤔", aurora: "🌌", shark: "🦈", dog: "🐶", cat: "🐱",
+  sahara: "🏜️", darkness: "🌑", letter: "✉️", beach: "🏖️", jamaica: "🌴", reggaeton: "🔊",
+  firestorm: "🔥", galaxy: "🌠", zombie: "🧟", memoryLane: "📼", wildWest: "🤠", fantasyIsland: "🏝️",
+  arctic: "🧊", tsunami: "🌊", thunderstorm: "⛈️", skydiving: "🪂", moonWalk: "🌕", bar: "🍸",
+  fairytale: "🏰", witch: "🧙", romanceRnb: "💜", hiphop: "🎤", babylon: "🏛️", swordNight: "⚔️",
+  drStrange: "🌀", lotr: "💍", arcane: "⚡", starWars: "✨",
+};
+let tcItems = [], tcIndex = 0, tcPreviousTheme = null, tcCardEls = [];
+let tcDragStartX = null, tcDragStartIndex = 0, tcDragDeltaX = 0;
+
+/** Deterministic-but-varied gradient per theme, hashed from its id — no
+ *  need to actually render each of the 42 canvas themes into a thumbnail
+ *  just to tell the cards apart at a glance. */
+function tcCardGradient(id) {
+  let h = 0; for (let i = 0; i < id.length; i++) { h = (h * 31 + id.charCodeAt(i)) >>> 0; }
+  const hue = h % 360;
+  return `linear-gradient(155deg, hsl(${hue},62%,30%), hsl(${(hue + 46) % 360},70%,14%))`;
+}
+function tcBuildCards() {
+  tcCardEls = tcItems.map((t, i) => {
+    const card = document.createElement("div");
+    card.className = "tc-card"; card.dataset.tcIndex = String(i);
+    card.style.background = tcCardGradient(t.id);
+    card.innerHTML = `<div class="tc-emoji">${TC_THEME_EMOJI[t.id] || "✨"}</div><div class="tc-label">${t.label}</div>`;
+    return card;
+  });
+  els.tcTrack.innerHTML = "";
+  tcCardEls.forEach(c => els.tcTrack.appendChild(c));
+}
+/** Positions every card relative to the current center index using the
+ *  shortest signed distance around the ring (so the wrap-around never
+ *  visibly "unwinds" the long way), and only bothers rendering the
+ *  handful of cards actually near the visible window. */
+function tcRenderPositions() {
+  const n = tcItems.length;
+  tcCardEls.forEach((card, i) => {
+    let d = i - tcIndex;
+    if (d > n / 2) d -= n;
+    if (d < -n / 2) d += n;
+    if (Math.abs(d) > 4) { card.style.display = "none"; return; }
+    card.style.display = "flex";
+    const scale = Math.max(0.5, 1 - Math.abs(d) * 0.17);
+    card.style.transform = `translateX(${d * 108}px) translateZ(${-Math.abs(d) * 100}px) rotateY(${-d * 34}deg) scale(${scale})`;
+    card.style.opacity = String(Math.max(0, 1 - Math.abs(d) * 0.26));
+    card.style.zIndex = String(100 - Math.abs(d));
+    card.classList.toggle("tc-active", d === 0);
+  });
+  els.tcCurrentLabel.textContent = tcItems[tcIndex].label;
+}
+/** Moves the centered card to `idx` (wrapping around the ring) and
+ *  swaps the LIVE animated background behind the carousel to preview
+ *  it immediately — nothing is saved to settings until confirmed. */
+function tcGoTo(idx) {
+  const n = tcItems.length;
+  tcIndex = ((idx % n) + n) % n;
+  tcRenderPositions();
+  window.VV.ThemeEngine.setTheme(tcItems[tcIndex].id);
+}
+function openThemeCarousel() {
+  tcPreviousTheme = state.settings.themeId;
+  tcItems = window.VV.ThemeEngine.THEME_LIST;
+  const startIdx = Math.max(0, tcItems.findIndex(t => t.id === state.settings.themeId));
+  tcBuildCards();
+  tcIndex = startIdx;
+  tcRenderPositions();
+  window.VV.ThemeEngine.setTheme(tcItems[tcIndex].id);
+  els.themeCarouselOverlay.classList.add("open");
+}
+function closeThemeCarousel(commit) {
+  if (commit) {
+    state.settings.themeId = tcItems[tcIndex].id;
+    applySettingsToUI(); saveSettings(); renderThemeGrid();
+    toast(`Background: ${tcItems[tcIndex].label}`);
+  } else {
+    window.VV.ThemeEngine.setTheme(tcPreviousTheme);
+  }
+  els.themeCarouselOverlay.classList.remove("open");
+}
+els.openThemeCarouselBtn.addEventListener("click", openThemeCarousel);
+els.tcCloseBtn.addEventListener("click", () => closeThemeCarousel(false));
+els.themeCarouselOverlay.addEventListener("click", (e) => { if (e.target === els.themeCarouselOverlay) closeThemeCarousel(false); });
+els.tcConfirmBtn.addEventListener("click", () => closeThemeCarousel(true));
+els.tcPrevBtn.addEventListener("click", () => tcGoTo(tcIndex - 1));
+els.tcNextBtn.addEventListener("click", () => tcGoTo(tcIndex + 1));
+els.tcTrack.addEventListener("click", (e) => {
+  if (Math.abs(tcDragDeltaX) > 6) return; // was a drag, not a tap
+  const card = e.target.closest(".tc-card");
+  if (!card) return;
+  tcGoTo(Number(card.dataset.tcIndex));
+});
+document.addEventListener("keydown", (e) => {
+  if (!els.themeCarouselOverlay.classList.contains("open")) return;
+  if (e.key === "ArrowLeft") tcGoTo(tcIndex - 1);
+  else if (e.key === "ArrowRight") tcGoTo(tcIndex + 1);
+  else if (e.key === "Escape") closeThemeCarousel(false);
+  else if (e.key === "Enter") closeThemeCarousel(true);
+});
+// Drag / swipe to spin the carousel — one card per ~90px dragged,
+// snapping to the nearest whole card on release.
+els.tcTrack.addEventListener("pointerdown", (e) => {
+  tcDragStartX = e.clientX; tcDragStartIndex = tcIndex; tcDragDeltaX = 0;
+  els.tcTrack.setPointerCapture(e.pointerId);
+});
+els.tcTrack.addEventListener("pointermove", (e) => {
+  if (tcDragStartX === null) return;
+  tcDragDeltaX = e.clientX - tcDragStartX;
+  const proposed = tcDragStartIndex - Math.round(tcDragDeltaX / 90);
+  if (proposed !== tcIndex) tcGoTo(proposed);
+});
+els.tcTrack.addEventListener("pointerup", () => { tcDragStartX = null; });
+els.tcTrack.addEventListener("pointercancel", () => { tcDragStartX = null; });
+
 /** Maps Settings → "Now Playing Overlay Strength" (0-100) onto the CSS
  *  variables the full player's scrim and the song-title/artist text
  *  shadows read from, so the details stay legible whether the chosen
@@ -1904,14 +2123,44 @@ function applyOverlayStrength() {
   const v = state.settings.overlayStrength ?? 55;
   const t = Math.max(0, Math.min(100, v)) / 100;
   const root = document.documentElement.style;
-  root.setProperty("--np-overlay-a", (0.08 + t * 0.62).toFixed(2));
-  root.setProperty("--np-overlay-mid", (0.20 + t * 0.65).toFixed(2));
-  root.setProperty("--np-overlay-b", (0.35 + t * 0.55).toFixed(2));
-  root.setProperty("--np-text-shadow-blur", (2 + t * 12).toFixed(1) + "px");
-  root.setProperty("--np-text-shadow-a", (0.25 + t * 0.6).toFixed(2));
-  root.setProperty("--np-mini-bg-a", (0.55 + t * 0.4).toFixed(2));
-  if (els.overlayStrengthInput) els.overlayStrengthInput.value = String(v);
+  // Curve was front-loaded — most of the darkening happened in the
+  // slider's first half, so pushing past ~55% barely changed anything
+  // and even 100% never got close to fully opaque. Squaring t skews the
+  // ramp so the back half of the slider keeps adding real darkness
+  // instead of flattening out, and the ceiling now reaches near-opaque
+  // at 100% instead of stalling at 0.70/0.90.
+  const t2 = t * t * (3 - 2 * t); // smoothstep — gentle at both ends, no flat plateau in the middle either
+  root.setProperty("--np-overlay-a", (0.06 + t2 * 0.82).toFixed(2));
+  root.setProperty("--np-overlay-mid", (0.16 + t2 * 0.78).toFixed(2));
+  root.setProperty("--np-overlay-b", (0.30 + t2 * 0.65).toFixed(2));
+  root.setProperty("--np-text-shadow-blur", (2 + t2 * 14).toFixed(1) + "px");
+  root.setProperty("--np-text-shadow-a", (0.25 + t2 * 0.65).toFixed(2));
+  root.setProperty("--np-mini-bg-a", (0.5 + t2 * 0.48).toFixed(2));
   if (els.overlayStrengthValue) els.overlayStrengthValue.textContent = v + "%";
+  // Only touch the slider's own .value when it's out of sync (i.e. when
+  // this call came from loading/restoring settings, not from the user
+  // actively dragging it) — reassigning .value on every "input" tick,
+  // even to the same number, is what was making the thumb feel like it
+  // was fighting the drag gesture instead of following it smoothly.
+  if (els.overlayStrengthInput && Number(els.overlayStrengthInput.value) !== v) {
+    els.overlayStrengthInput.value = String(v);
+  }
+}
+
+/** Maps Settings → "Song List Darkness" (0-100) onto the CSS variable the
+ *  library scroll area reads for its own tint, laid directly behind the
+ *  song rows on the Library/Favorites/Recent/Folder lists — independent
+ *  of the Now Playing overlay above, since a busy animated theme can make
+ *  song titles hard to read even when nothing is playing yet.
+ *  0 = background fully visible behind the list, 100 = list panel near-black. */
+function applySongListOverlay() {
+  const v = state.settings.songListOverlay ?? 40;
+  const t = Math.max(0, Math.min(100, v)) / 100;
+  document.documentElement.style.setProperty("--songlist-overlay-a", (t * 0.92).toFixed(2));
+  if (els.songListOverlayValue) els.songListOverlayValue.textContent = v + "%";
+  if (els.songListOverlayInput && Number(els.songListOverlayInput.value) !== v) {
+    els.songListOverlayInput.value = String(v);
+  }
 }
 function openSettings() { els.settingsModalOverlay.classList.add("open"); renderFontGrid(); renderThemeGrid(); renderArtStyleGrid(); renderRageBgGrid(); renderRageDripGrid(); }
 function closeSettings() { els.settingsModalOverlay.classList.remove("open"); }
@@ -2033,6 +2282,11 @@ els.overlayStrengthInput.addEventListener("input", () => {
   applyOverlayStrength();
 });
 els.overlayStrengthInput.addEventListener("change", saveSettings);
+els.songListOverlayInput.addEventListener("input", () => {
+  state.settings.songListOverlay = Number(els.songListOverlayInput.value);
+  applySongListOverlay();
+});
+els.songListOverlayInput.addEventListener("change", saveSettings);
 document.getElementById("rageBgGrid").addEventListener("click", (e) => {
   const removeBtn = e.target.closest("[data-remove-custom-bg]");
   if (removeBtn) { e.stopPropagation(); removeCustomBgImage(); return; }

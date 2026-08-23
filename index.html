@@ -347,7 +347,10 @@
       <div class="section-label" style="margin-top:16px;">Font (8 styles)</div>
       <div class="font-grid" id="fontGrid"></div>
 
-      <div class="section-label">Animated Background (42 themes) <span style="color:var(--text-muted);font-size:10.5px;">— or upload your own video</span></div>
+      <div class="section-label" style="margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+        <span>Animated Background (42 themes) <span style="color:var(--text-muted);font-size:10.5px;">— or upload your own video</span></span>
+        <button class="carousel-launch-btn" id="openThemeCarouselBtn" type="button">🎠 Carousel</button>
+      </div>
       <div class="theme-grid" id="themeGrid"></div>
       <input type="file" id="themeVideoUploadInput" accept="video/*" style="display:none;">
 
@@ -357,6 +360,14 @@
         <input type="range" id="overlayStrengthInput" min="0" max="100" step="5" value="55">
         <span class="overlay-strength-icon" title="Song details fully shielded">◆</span>
         <span class="overlay-strength-value" id="overlayStrengthValue">55%</span>
+      </div>
+
+      <div class="section-label" style="margin-top:16px;">Song List Darkness <span style="color:var(--text-muted);font-size:10.5px;">(dims the background behind your library list)</span></div>
+      <div class="overlay-strength-row">
+        <span class="overlay-strength-icon" title="Background fully visible">☾</span>
+        <input type="range" id="songListOverlayInput" min="0" max="100" step="5" value="40">
+        <span class="overlay-strength-icon" title="Song list panel near-black">◆</span>
+        <span class="overlay-strength-value" id="songListOverlayValue">40%</span>
       </div>
 
       <div class="modal-actions">
@@ -383,6 +394,27 @@
         <li><span class="num">3</span>Tap <strong>Add</strong> — Vvynas Vane now opens full-screen like any other app.</li>
       </ol>
       <div class="modal-actions"><button class="btn-primary" id="closeIosModalBtn">Got it</button></div>
+    </div>
+  </div>
+
+  <!-- ============ BACKGROUND TEMPLATE CAROUSEL ============
+       A coverflow-style alternative to scrolling the theme grid: the
+       centered card is the live preview (the real animated background
+       swaps in behind this translucent panel as you browse), side cards
+       recede in a shallow 3D arc left/right, and the strip wraps end to
+       end so spinning past the last theme loops back to the first —
+       like rotating a small globe of previews rather than a flat list. -->
+  <div class="modal-overlay theme-carousel-overlay" id="themeCarouselOverlay">
+    <div class="theme-carousel-shell">
+      <button class="tc-close" id="tcCloseBtn" aria-label="Close carousel">✕</button>
+      <div class="tc-title">Spin to a Background</div>
+      <div class="tc-stage">
+        <button class="tc-nav tc-nav-left" id="tcPrevBtn" aria-label="Previous background">‹</button>
+        <div class="tc-track" id="tcTrack"></div>
+        <button class="tc-nav tc-nav-right" id="tcNextBtn" aria-label="Next background">›</button>
+      </div>
+      <div class="tc-current-label" id="tcCurrentLabel"></div>
+      <button class="btn-primary tc-confirm" id="tcConfirmBtn">Use This Background</button>
     </div>
   </div>
 
