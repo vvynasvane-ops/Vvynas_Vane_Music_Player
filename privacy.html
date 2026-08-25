@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Privacy Policy — Vvynas Vane</title>
+<meta name="theme-color" content="#000000">
+<meta name="description" content="Privacy Policy for the Vvynas Vane music player: what data is collected, how storage and permissions are used, and cookie/ad disclosure.">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="icon" href="favi.jpeg">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700;900&family=Roboto+Condensed:wght@400;700&display=swap');
+  :root{
+    --bg0:#000; --bg1:#0B0B0B; --bg2:#121212;
+    --gold:#C9A84C; --gold-dim:rgba(201,168,76,.16); --gold-line:rgba(201,168,76,.32);
+    --green:#7FBF7F; --amber:#D9A441;
+    --text:#F5E6C8; --muted:#8A7550; --divider:#1C1C1C;
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ height:100%; margin:0; }
+  body{ background:var(--bg0); color:var(--text); font-family:'Roboto Condensed','Roboto',ui-sans-serif,sans-serif; }
+  #wrap{ max-width:680px; margin:0 auto; padding:calc(20px + env(safe-area-inset-top,0px)) 20px calc(48px + env(safe-area-inset-bottom,0px)); }
+
+  .top-row{ display:flex; align-items:center; gap:12px; margin-bottom:18px; }
+  .back-btn{ width:38px; height:38px; border-radius:50%; border:1px solid var(--gold-line); display:flex; align-items:center; justify-content:center; color:var(--gold); text-decoration:none; flex:none; font-size:16px; }
+  .eyebrow{ font-size:10.5px; letter-spacing:.22em; text-transform:uppercase; color:var(--muted); }
+  h1{ font-size:21px; letter-spacing:.04em; margin:2px 0 0; color:var(--gold); }
+  .updated{ font-size:11px; color:var(--muted); margin:10px 0 22px; }
+
+  .tldr{ background:linear-gradient(180deg, var(--bg2), var(--bg1)); border:1px solid var(--gold-line); border-radius:14px; padding:16px 18px; margin-bottom:20px; }
+  .tldr .lbl{ font-size:10.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--gold); margin-bottom:8px; }
+  .tldr ul{ margin:0; padding-left:18px; }
+  .tldr li{ font-size:13px; line-height:1.7; color:var(--text); }
+
+  h2{ font-size:13px; letter-spacing:.1em; text-transform:uppercase; color:var(--gold); margin:26px 0 8px; display:flex; align-items:center; gap:8px; }
+  h2 .n{ font-size:10.5px; color:var(--muted); font-weight:400; letter-spacing:0; text-transform:none; }
+  p{ font-size:13.5px; line-height:1.75; color:var(--text); margin:0 0 10px; }
+  p .mute{ color:var(--muted); }
+  ul.plain{ margin:0 0 10px; padding-left:20px; }
+  ul.plain li{ font-size:13.5px; line-height:1.75; color:var(--text); margin-bottom:4px; }
+
+  table.status{ width:100%; border-collapse:collapse; margin:8px 0 14px; font-size:12.5px; }
+  table.status th, table.status td{ text-align:left; padding:9px 8px; border-bottom:1px solid var(--divider); }
+  table.status th{ color:var(--muted); font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:.08em; }
+  .tag{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:10.5px; font-weight:700; letter-spacing:.03em; }
+  .tag.none{ background:rgba(127,191,127,.15); color:var(--green); }
+  .tag.local{ background:var(--gold-dim); color:var(--gold); }
+  .tag.watch{ background:rgba(217,164,65,.15); color:var(--amber); }
+
+  .contact-box{ background:var(--gold-dim); border:1px solid var(--gold-line); border-radius:14px; padding:16px 18px; margin-top:24px; text-align:center; }
+  .contact-box a{ color:var(--gold); font-weight:700; text-decoration:none; }
+
+  .foot-links{ display:flex; flex-wrap:wrap; gap:8px 16px; justify-content:center; margin-top:26px; }
+  .foot-links a{ font-size:11.5px; color:var(--muted); text-decoration:none; }
+  .foot-links a:active{ color:var(--gold); }
+</style>
+</head>
+<body>
+<div id="wrap">
+
+  <div class="top-row">
+    <a class="back-btn" href="index.html" aria-label="Back">←</a>
+    <div>
+      <div class="eyebrow">Vvynas Vane</div>
+      <h1>Privacy Policy</h1>
+    </div>
+  </div>
+  <div class="updated">Effective &amp; last updated: August 25, 2026</div>
+
+  <div class="tldr">
+    <div class="lbl">The short version</div>
+    <ul>
+      <li>Your music files are never uploaded — they stay on your device.</li>
+      <li>We don't collect names, emails, or any account data — there is no account.</li>
+      <li>We will  run ads or tracking cookies.</li>
+      <li>Settings and playback history are saved only in your browser's local storage.</li>
+    </ul>
+  </div>
+
+  <h2>1. Who this policy covers</h2>
+  <p>This Privacy Policy applies to Vvynas Vane (the "App"), a web-based and installable music, video, and DJ-mixing player developed and maintained by an independent developer operating as <span class="mute">Vvynas Vane</span>. It explains what happens to your data when you use the App, whether in a browser tab or installed as a Progressive Web App (PWA).</p>
+
+  <h2>2. Data we do <span class="n">not</span> collect</h2>
+  <p>The App does not require an account, does not ask for your name or email to function, and does not upload, transmit, or have access to the audio, video, or image files in the folder you choose to open. Playback happens entirely on your device, using your browser's built-in File System Access permission.</p>
+  <ul class="plain">
+    <li>No song, video, or image file ever leaves your device.</li>
+    <li>No listening history, playlist, or favorite is sent to any server we control.</li>
+    <li>No location, contacts, camera, or microphone data is accessed.</li>
+  </ul>
+
+  <h2>3. What is stored, and where</h2>
+  <p>To remember your playlists, favorites, folders, theme, and settings between visits, the App writes to storage that lives inside your own browser — never on a remote server:</p>
+  <table class="status">
+    <tr><th>What</th><th>Stored where</th><th>Leaves device?</th></tr>
+    <tr><td>Playlists, favorites, folders, recap history</td><td>Browser IndexedDB</td><td><span class="tag none">Never</span></td></tr>
+    <tr><td>Theme, accent colors, overlay/font settings</td><td>Browser local storage</td><td><span class="tag none">Never</span></td></tr>
+    <tr><td>Folder access handle (so you're not re-prompted)</td><td>Browser-managed permission store</td><td><span class="tag none">Never</span></td></tr>
+    <tr><td>A custom background image/video you upload in Settings</td><td>Browser IndexedDB (as a local blob)</td><td><span class="tag none">Never</span></td></tr>
+  </table>
+  <p>Clearing your browser's site data for this App, or uninstalling the installed PWA, permanently deletes all of the above — see Section 8.</p>
+
+  <h2>4. Cookies &amp; similar technology</h2>
+  <p>The App does not set its own tracking or advertising cookies. Standard browser mechanisms it does rely on to function — IndexedDB and local storage, described above — are not third-party cookies and are not used to track you across other websites.</p>
+
+  <h2>5. Third-party services</h2>
+  <p>The App loads its typefaces from the Google Fonts content delivery network. Loading a font this way sends your device's IP address and browser information to Google as part of an ordinary web request, under Google's own privacy policy — the App itself does not control or receive that data. No other third-party analytics, crash-reporting, or tracking service is embedded in the App at this time.</p>
+
+  <h2>6. Advertising</h2>
+  <p>The App does not currently display advertising of any kind. <span class="mute">If that ever changes, this policy will be updated in advance to name the ad provider, the data it collects, and how to opt out, before any ads are shown</span> — see Section 9.</p>
+
+  <h2>7. Children's privacy</h2>
+  <p>The App is not directed at children and does not knowingly collect personal information from anyone, including children under 13. Because no account or personal information is collected from any user, this risk is inherently limited.</p>
+
+  <h2>8. Your choices &amp; control</h2>
+  <p>Because everything the App stores lives in your own browser, you're always in control of it:</p>
+  <ul class="plain">
+    <li><strong>Change or revoke folder access</strong> — from Settings → Change Folder, or your browser's site-permission controls.</li>
+    <li><strong>Delete everything</strong> — clear your browser's site data for this App (or uninstall it, if installed) to erase playlists, settings, and any uploaded background instantly.</li>
+    <li><strong>Use it without saving anything</strong> — declining the folder prompt or using a private/incognito window keeps nothing persisted after you close the tab.</li>
+  </ul>
+
+  <h2>9. Changes to this policy</h2>
+  <p>If this policy changes — for example, if a future update adds analytics or advertising — the "last updated" date above will change and, for any material change, a notice will be shown inside the App itself before it takes effect.</p>
+
+  <h2>10. Contact</h2>
+  <p>Questions about this policy or how the App handles data can be sent directly to the developer.</p>
+  <div class="contact-box">
+    <a href="mailto:artyourtaste@gmail.com?subject=Vvynas%20Vane%20—%20Privacy%20question">artyourtaste@gmail.com</a>
+  </div>
+
+  <div class="foot-links">
+    <a href="about.html">About &amp; Contact</a>
+    <a href="terms.html">Terms &amp; Conditions</a>
+    <a href="index.html">Back to app</a>
+  </div>
+
+</div>
+</body>
+</html>

@@ -159,6 +159,7 @@ const els = {
   closeIosModalBtn: $("#closeIosModalBtn"),
 
   openThemeCarouselBtn: $("#openThemeCarouselBtn"),
+  homeCarouselBtn: $("#homeCarouselBtn"),
   themeCarouselOverlay: $("#themeCarouselOverlay"),
   tcTrack: $("#tcTrack"),
   tcPrevBtn: $("#tcPrevBtn"),
@@ -2081,6 +2082,7 @@ function closeThemeCarousel(commit) {
   els.themeCarouselOverlay.classList.remove("open");
 }
 els.openThemeCarouselBtn.addEventListener("click", openThemeCarousel);
+els.homeCarouselBtn.addEventListener("click", openThemeCarousel);
 els.tcCloseBtn.addEventListener("click", () => closeThemeCarousel(false));
 els.themeCarouselOverlay.addEventListener("click", (e) => { if (e.target === els.themeCarouselOverlay) closeThemeCarousel(false); });
 els.tcConfirmBtn.addEventListener("click", () => closeThemeCarousel(true));
