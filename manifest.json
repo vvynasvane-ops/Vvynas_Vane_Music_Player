@@ -1,0 +1,26 @@
+{
+  "name": "Vvynas Vane",
+  "short_name": "Vvynas Vane",
+  "description": "Local-first music player, playlists, DJ mode, and video — all running in your browser.",
+  "start_url": "index.html",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#050505",
+  "theme_color": "#050505",
+  "icons": [
+    { "src": "icon-16.png", "sizes": "16x16", "type": "image/png", "purpose": "any" },
+    { "src": "icon-32.png", "sizes": "32x32", "type": "image/png", "purpose": "any" },
+    { "src": "icon-48.png", "sizes": "48x48", "type": "image/png", "purpose": "any" },
+    { "src": "icon-64.png", "sizes": "64x64", "type": "image/png", "purpose": "any" },
+    { "src": "icon-96.png", "sizes": "96x96", "type": "image/png", "purpose": "any" },
+    { "src": "icon-128.png", "sizes": "128x128", "type": "image/png", "purpose": "any" },
+    { "src": "icon-152.png", "sizes": "152x152", "type": "image/png", "purpose": "any" },
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-256.png", "sizes": "256x256", "type": "image/png", "purpose": "any" },
+    { "src": "icon-384.png", "sizes": "384x384", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

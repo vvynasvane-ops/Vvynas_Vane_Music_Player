@@ -489,7 +489,6 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 .btn-secondary:hover { border-color: var(--accent-dark); color: var(--accent); background: var(--accent-dim); }
 .btn-primary:hover { border-color: var(--accent-dark); color: var(--accent); background: var(--accent-dim); }
 
-
 /* ---------- Song rows / grid ---------- */
 .section-label {
   font-family: var(--font-display); font-size: 12px; letter-spacing: .14em; text-transform: uppercase;

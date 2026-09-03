@@ -6,9 +6,24 @@
 <title>Recap — Vvynas Vane</title>
 <meta name="theme-color" content="#05030D">
 <link rel="manifest" href="manifest.json">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+
+<!-- Favicon: vector first (crisp at every size, modern browsers), with
+     raster fallbacks for browsers/contexts that don't support SVG icons. -->
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="icon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="icon-16.png" sizes="16x16" type="image/png">
+<link rel="shortcut icon" href="favicon.ico">
+
+<!-- iOS "Add to Home Screen" — Safari only ever reads apple-touch-icon,
+     never the manifest, so this is required for the icon to appear there. -->
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="apple-touch-icon" sizes="152x152" href="apple-touch-icon-152.png">
+<link rel="apple-touch-icon" sizes="167x167" href="apple-touch-icon-167.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="icon" href="favi.jpeg">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Vvynas Vane">
+<meta name="mobile-web-app-capable" content="yes">
 <style>
   /* Recap keeps its own distinct dark-purple starry identity, ported
      straight from RecapActivity's own palette — separate from the
