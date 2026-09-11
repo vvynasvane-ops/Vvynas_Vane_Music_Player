@@ -1,16 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <title>Vvynas Vane</title>
   <defs>
-    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#121212"/>
-      <stop offset="1" stop-color="#050505"/>
-    </linearGradient>
     <clipPath id="badgeClip">
       <rect x="0" y="0" width="512" height="512" rx="112.6" ry="112.6"/>
     </clipPath>
   </defs>
-
-  <rect x="0" y="0" width="512" height="512" rx="112.6" ry="112.6" fill="url(#bgGrad)"/>
 
   <g clip-path="url(#badgeClip)">
     <g transform="translate(51.20,-40.04) scale(1.2800)">
@@ -512,6 +506,4 @@
     </g>
   </g>
 
-  <rect x="4.61" y="4.61" width="502.78" height="502.78"
-        rx="112.6" ry="112.6" fill="none" stroke="#C9A84C" stroke-width="9.22"/>
 </svg>

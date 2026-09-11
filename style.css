@@ -464,7 +464,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
   padding: 24px; text-align: center;
 }
 .onboarding-card { max-width: 420px; }
-.onboarding .sigil-lg { width: 84px; height: 84px; margin: 0 auto 22px; filter: drop-shadow(0 0 18px var(--accent-dim)); animation: sigilFloat 5s ease-in-out infinite; }
+.onboarding .sigil-lg { width: 84px; height: 84px; margin: 0 auto 22px; animation: sigilFloat 5s ease-in-out infinite; }
 @keyframes sigilFloat { 0%,100% { transform: translateY(0);} 50% { transform: translateY(-8px);} }
 .onboarding h1 { font-family: var(--font-display); font-size: 26px; color: var(--accent); margin: 0 0 10px; letter-spacing: .03em; }
 .onboarding p { font-family: var(--font-serif); font-size: 17px; color: var(--text-secondary); line-height: 1.55; margin: 0 0 26px; }
@@ -487,7 +487,7 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
   font-size: 13.5px; padding: 12px 22px; border-radius: 999px; width: 100%; margin-top: 12px; transition: all .2s;
 }
 .btn-secondary:hover { border-color: var(--accent-dark); color: var(--accent); background: var(--accent-dim); }
-.btn-primary:hover { border-color: var(--accent-dark); color: var(--accent); background: var(--accent-dim); }
+.btn-secondary:hover { border-color: var(--accent-dark); color: var(--accent); background: var(--accent-dim); }
 
 /* ---------- Song rows / grid ---------- */
 .section-label {
@@ -537,6 +537,8 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 .select-toolbar button:hover { color: var(--accent); border-color: var(--accent-dark); background: var(--accent-dim); }
 .select-toolbar .remove-selected-btn { color: var(--accent2); border-color: rgba(178,34,34,.4); background: var(--accent2-dim); }
 .select-toolbar .remove-selected-btn:hover { background: rgba(178,34,34,.22); }
+.select-toolbar .add-selected-btn { color: var(--accent); border-color: var(--accent-dark); background: var(--accent-dim); }
+.select-toolbar .add-selected-btn:hover { background: var(--accent-dim); opacity: .8; }
 .select-toggle-btn {
   display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; margin-left: 8px; border-radius: 999px;
   border: 1px solid var(--divider); background: var(--ripple); font-size: 10.5px; color: var(--text-secondary); text-transform: none; letter-spacing: 0;
@@ -549,6 +551,36 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 /* Pinned "Recently Played" card in the Playlists grid */
 .playlist-card.recent-card { border-color: var(--accent-dark); background: linear-gradient(160deg, var(--bg-card2), var(--bg-card)); }
 .playlist-card.recent-card .art { color: var(--accent); }
+/* Pinned "External Playlists" card in the Playlists grid */
+.playlist-card.external-card-link { border-color: var(--accent2); background: linear-gradient(160deg, var(--bg-card2), var(--bg-card)); }
+.playlist-card.external-card-link .art { color: var(--accent2); }
+
+/* ---------- External playlists (YouTube playlist / channel embeds) ---------- */
+.external-add-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.external-add-row input[type=text] {
+  flex: 1; min-width: 180px; background: var(--bg-card); border: 1px solid var(--divider); color: var(--text-primary);
+  border-radius: var(--radius-s); padding: 11px 13px; font-size: 13.5px; outline: none; transition: border-color .15s;
+}
+.external-add-row input[type=text]:focus { border-color: var(--accent-dark); }
+.external-add-row button { flex: none; padding: 11px 18px; }
+.external-hint { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; margin: 0 0 18px; max-width: 640px; }
+.external-card {
+  background: var(--bg-card); border: 1px solid var(--divider); border-radius: var(--radius-m);
+  padding: 14px; margin-bottom: 16px;
+}
+.external-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.external-card-head .name { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext-badge {
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; color: var(--accent);
+  background: var(--accent-dim); border: 1px solid var(--accent-dark); border-radius: 999px; padding: 2px 8px; margin-left: 8px; vertical-align: middle;
+}
+.ext-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.ext-note {
+  font-size: 11px; color: var(--text-muted); background: var(--accent2-dim); border: 1px solid rgba(178,34,34,.3);
+  border-radius: var(--radius-s); padding: 8px 10px; margin-bottom: 10px; line-height: 1.5;
+}
+.external-embed-wrap { position: relative; width: 100%; padding-top: 56.25%; border-radius: var(--radius-s); overflow: hidden; background: #000; }
+.external-embed-wrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 
 .empty-state {
   display: flex; flex-direction: column; align-items: center; text-align: center;
