@@ -569,8 +569,22 @@ button:active, .nav-item:active, .tabbar button:active, .song-row:active,
 }
 .song-row .fav-btn svg, .song-row .more-btn svg, .song-row .queue-btn svg { width: 17px; height: 17px; }
 .song-row .fav-btn, .song-row .more-btn, .song-row .queue-btn {
+  position: relative; /* anchor for the enlarged hit-area pseudo-element below */
   padding: 6px; border-radius: 50%; color: var(--text-secondary);
   background: var(--ripple); border: 1px solid var(--divider);
+}
+/* The visible circle is ~29px (17px icon + 6px padding) — well under the
+   ~44px minimum reliable touch target, and it sits directly on the row,
+   whose entire remaining surface plays the song. A real thumb missing the
+   tiny circle by a few px was landing on the row and triggering playback,
+   which read as "tapping favorite/queue/more plays audio". This invisible
+   ::after extends the actual hit area to ~44px on every side without
+   touching the button's visual size or the row's layout/spacing — a tap
+   inside the padded zone still resolves e.target to the <button> itself
+   (pseudo-elements aren't separately targetable), so the existing
+   data-action dispatch below keeps working unchanged. */
+.song-row .fav-btn::after, .song-row .more-btn::after, .song-row .queue-btn::after {
+  content: ""; position: absolute; inset: -8px;
 }
 .song-row .fav-btn.active { color: var(--accent2); background: var(--accent2-dim); border-color: rgba(178,34,34,.4); }
 .song-row .fav-btn:hover, .song-row .more-btn:hover, .song-row .queue-btn:hover { color: var(--accent); background: var(--accent-dim); border-color: var(--accent-dark); }

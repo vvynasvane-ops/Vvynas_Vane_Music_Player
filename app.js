@@ -2607,7 +2607,25 @@ async function triggerInstall() {
 }
 
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
-  window.addEventListener("load", () => {
+  window.addEventListener("load", async () => {
+    // Self-healing: a service worker from an older deploy can keep serving
+    // its cached (stale) app.js/index.html forever, since it outlives a
+    // normal deploy until something explicitly replaces it — which is
+    // exactly how a bug that's already fixed in the source can still show
+    // up for someone testing in a browser that visited an earlier build.
+    // Rather than requiring a manual DevTools → Unregister every time,
+    // clear out anything left over from a previous version on every load,
+    // then register fresh. (If a real offline-caching sw.js is added later,
+    // this eager wipe should be scoped to a one-time version check instead
+    // of running unconditionally, so it doesn't fight the new cache.)
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+      if (window.caches) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+    } catch (e) { /* best-effort cleanup only — never block the app on this */ }
     navigator.serviceWorker.register("sw.js").catch(() => {});
   });
 }
@@ -2758,13 +2776,13 @@ els.iosModalOverlay.addEventListener("click", (e) => { if (e.target === els.iosM
 // Content clicks (delegated) — song rows, folder/playlist cards, action buttons
 els.contentScroll.addEventListener("click", (e) => {
   const favBtn = e.target.closest('[data-action="fav"]');
-  if (favBtn) { window.VV.PixieDust.burstFromEl(favBtn); toggleFavorite(favBtn.dataset.id); return; }
+  if (favBtn) { e.stopPropagation(); window.VV.PixieDust.burstFromEl(favBtn); toggleFavorite(favBtn.dataset.id); return; }
   const queueBtn = e.target.closest('[data-action="queue"]');
-  if (queueBtn) { window.VV.PixieDust.burstFromEl(queueBtn); addToQueueNext(queueBtn.dataset.id); return; }
+  if (queueBtn) { e.stopPropagation(); window.VV.PixieDust.burstFromEl(queueBtn); addToQueueNext(queueBtn.dataset.id); return; }
   const moreBtn = e.target.closest('[data-action="more"]');
-  if (moreBtn) { openPlaylistModal(moreBtn.dataset.id); return; }
+  if (moreBtn) { e.stopPropagation(); openPlaylistModal(moreBtn.dataset.id); return; }
   const rmBtn = e.target.closest('[data-action="remove-from-playlist"]');
-  if (rmBtn) { removeSongFromPlaylist(rmBtn.dataset.playlist, rmBtn.dataset.id); return; }
+  if (rmBtn) { e.stopPropagation(); removeSongFromPlaylist(rmBtn.dataset.playlist, rmBtn.dataset.id); return; }
   const delPl = e.target.closest('[data-action="delete-playlist"]');
   if (delPl) { if (confirm("Delete this playlist?")) deletePlaylist(delPl.dataset.id); return; }
   const renamePl = e.target.closest('[data-action="rename-playlist"]');
