@@ -45,6 +45,8 @@ const state = {
   repeat: "off",         // off | all | one
   isPlaying: false,
   addToPlaylistTargetId: null,
+  rowActionsTargetId: null,
+  rowActionsPlaylistId: null,
   settings: { light: false, resume: true, fontStyle: 0, themeId: "none", accentColor: "#C9A84C", accent2Color: "#B22222", artStyle: "sigil", rageMode: false, rageBackground: "none", rageDripType: "smoke", overlayStrength: 55, songListOverlay: 40 },
   usingFSApi: false,
   fileRefs: new Map(),   // songId -> File or FileSystemFileHandle
@@ -135,6 +137,12 @@ const els = {
   queueSheet: $("#queueSheet"),
   closeQueueBtn: $("#closeQueueBtn"),
   queueList: $("#queueList"),
+  rowActionsSheetOverlay: $("#rowActionsSheetOverlay"),
+  rowActionsSheet: $("#rowActionsSheet"),
+  closeRowActionsBtn: $("#closeRowActionsBtn"),
+  rowActionsSongTitle: $("#rowActionsSongTitle"),
+  rowActionsSongArtist: $("#rowActionsSongArtist"),
+  rowActionsList: $("#rowActionsList"),
 
   playlistModalOverlay: $("#playlistModalOverlay"),
   playlistModalTitle: $("#playlistModalTitle"),
@@ -1465,13 +1473,8 @@ function songRowHtml(song, index, opts = {}) {
     </div>
     <span class="dur">${song.duration ? fmtTime(song.duration) : ""}</span>
     ${selecting ? "" : `<div class="row-actions">
-      <button class="fav-btn ${fav ? "active" : ""}" data-action="fav" data-id="${song.id}" title="Favorite">
-        <svg viewBox="0 0 24 24" fill="${fav ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 000-7.8z"/></svg>
-      </button>
-      <button class="queue-btn" data-action="queue" data-id="${song.id}" title="Play next">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h9M4 12h9M4 18h9M17 6v12m0 0l-3-3m3 3l3-3"/></svg>
-      </button>
-      <button class="more-btn" data-action="more" data-id="${song.id}" title="Add to playlist">
+      <button class="row-menu-btn" data-action="row-menu" data-id="${song.id}" title="Song actions">
+        ${fav ? `<span class="fav-dot" title="Favorited"></span>` : ""}
         <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
       </button>
     </div>`}
@@ -1635,17 +1638,9 @@ function playlistRowHtml(song, index, playlistId) {
     </div>
     <span class="dur">${song.duration ? fmtTime(song.duration) : ""}</span>
     ${selecting ? "" : `<div class="row-actions">
-      <button class="fav-btn ${fav ? "active" : ""}" data-action="fav" data-id="${song.id}" title="Favorite">
-        <svg viewBox="0 0 24 24" fill="${fav ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 000-7.8z"/></svg>
-      </button>
-      <button class="queue-btn" data-action="queue" data-id="${song.id}" title="Play next">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h9M4 12h9M4 18h9M17 6v12m0 0l-3-3m3 3l3-3"/></svg>
-      </button>
-      <button class="more-btn" data-action="more" data-id="${song.id}" title="Add to playlist">
+      <button class="row-menu-btn" data-action="row-menu" data-id="${song.id}" title="Song actions">
+        ${fav ? `<span class="fav-dot" title="Favorited"></span>` : ""}
         <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
-      </button>
-      <button class="more-btn" data-action="remove-from-playlist" data-id="${song.id}" data-playlist="${playlistId}" title="Remove from this playlist">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
     </div>`}
   </div>`;
@@ -2128,6 +2123,60 @@ function renderQueueSheet() {
 }
 function openQueue() { renderQueueSheet(); els.sheetOverlay.classList.add("open"); els.queueSheet.classList.add("open"); }
 function closeQueue() { els.sheetOverlay.classList.remove("open"); els.queueSheet.classList.remove("open"); }
+
+/* ---------------------------------------------------------------------
+   Song actions sheet — opened from the single ⋮ per row. See the HTML
+   comment on #rowActionsSheet for why this replaced the old three-icon
+   row-actions cluster.
+   --------------------------------------------------------------------- */
+function rowActionItemHtml({ action, icon, label, active, danger }) {
+  return `<button type="button" class="row-action-item ${active ? "active" : ""} ${danger ? "danger" : ""}" data-action="${action}">
+    <svg viewBox="0 0 24 24" fill="${active && action === "sheet-fav" ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2">${icon}</svg>
+    <span>${label}</span>
+  </button>`;
+}
+function renderRowActionsList() {
+  const song = state.songs.find(s => s.id === state.rowActionsTargetId);
+  if (!song) return;
+  const fav = state.favorites.has(song.id);
+  const items = [
+    rowActionItemHtml({
+      action: "sheet-fav", active: fav,
+      label: fav ? "Remove from Favorites" : "Add to Favorites",
+      icon: `<path d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 000-7.8z"/>`,
+    }),
+    rowActionItemHtml({
+      action: "sheet-queue", label: "Play Next",
+      icon: `<path d="M4 6h9M4 12h9M4 18h9M17 6v12m0 0l-3-3m3 3l3-3"/>`,
+    }),
+    rowActionItemHtml({
+      action: "sheet-playlist", label: "Add to Playlist",
+      icon: `<path d="M12 5v14M5 12h14"/>`,
+    }),
+  ];
+  if (state.rowActionsPlaylistId) {
+    items.push(rowActionItemHtml({
+      action: "sheet-remove-from-playlist", danger: true, label: "Remove from This Playlist",
+      icon: `<path d="M6 6l12 12M18 6L6 18"/>`,
+    }));
+  }
+  els.rowActionsSongTitle.textContent = song.title;
+  els.rowActionsSongArtist.textContent = song.artist;
+  els.rowActionsList.innerHTML = items.join("");
+}
+function openRowActionSheet(songId, playlistId = null) {
+  state.rowActionsTargetId = songId;
+  state.rowActionsPlaylistId = playlistId;
+  renderRowActionsList();
+  els.rowActionsSheetOverlay.classList.add("open");
+  els.rowActionsSheet.classList.add("open");
+}
+function closeRowActionSheet() {
+  els.rowActionsSheetOverlay.classList.remove("open");
+  els.rowActionsSheet.classList.remove("open");
+  state.rowActionsTargetId = null;
+  state.rowActionsPlaylistId = null;
+}
 
 /* ---------------------------------------------------------------------
    Add-to-playlist / new-playlist modals
@@ -2775,14 +2824,14 @@ els.iosModalOverlay.addEventListener("click", (e) => { if (e.target === els.iosM
 
 // Content clicks (delegated) — song rows, folder/playlist cards, action buttons
 els.contentScroll.addEventListener("click", (e) => {
-  const favBtn = e.target.closest('[data-action="fav"]');
-  if (favBtn) { e.stopPropagation(); window.VV.PixieDust.burstFromEl(favBtn); toggleFavorite(favBtn.dataset.id); return; }
-  const queueBtn = e.target.closest('[data-action="queue"]');
-  if (queueBtn) { e.stopPropagation(); window.VV.PixieDust.burstFromEl(queueBtn); addToQueueNext(queueBtn.dataset.id); return; }
-  const moreBtn = e.target.closest('[data-action="more"]');
-  if (moreBtn) { e.stopPropagation(); openPlaylistModal(moreBtn.dataset.id); return; }
-  const rmBtn = e.target.closest('[data-action="remove-from-playlist"]');
-  if (rmBtn) { e.stopPropagation(); removeSongFromPlaylist(rmBtn.dataset.playlist, rmBtn.dataset.id); return; }
+  const menuBtn = e.target.closest('[data-action="row-menu"]');
+  if (menuBtn) {
+    e.stopPropagation();
+    window.VV.PixieDust.burstFromEl(menuBtn);
+    const row = menuBtn.closest(".song-row");
+    openRowActionSheet(menuBtn.dataset.id, row ? row.dataset.playlistCtx || null : null);
+    return;
+  }
   const delPl = e.target.closest('[data-action="delete-playlist"]');
   if (delPl) { if (confirm("Delete this playlist?")) deletePlaylist(delPl.dataset.id); return; }
   const renamePl = e.target.closest('[data-action="rename-playlist"]');
@@ -3033,6 +3082,28 @@ els.queueList.addEventListener("click", (e) => {
   }
   const row = e.target.closest(".song-row");
   if (row) { state.queueIndex = Number(row.dataset.queueIndex); loadAndPlayCurrent(); closeQueue(); }
+});
+
+els.closeRowActionsBtn.addEventListener("click", closeRowActionSheet);
+els.rowActionsSheetOverlay.addEventListener("click", closeRowActionSheet);
+els.rowActionsList.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-action]");
+  if (!btn) return;
+  const songId = state.rowActionsTargetId;
+  if (!songId) return;
+  if (btn.dataset.action === "sheet-fav") {
+    toggleFavorite(songId);
+    renderRowActionsList(); // reflect the new state immediately without closing the sheet
+  } else if (btn.dataset.action === "sheet-queue") {
+    addToQueueNext(songId);
+    closeRowActionSheet();
+  } else if (btn.dataset.action === "sheet-playlist") {
+    closeRowActionSheet();
+    openPlaylistModal(songId);
+  } else if (btn.dataset.action === "sheet-remove-from-playlist") {
+    removeSongFromPlaylist(state.rowActionsPlaylistId, songId);
+    closeRowActionSheet();
+  }
 });
 
 window.addEventListener("keydown", (e) => {

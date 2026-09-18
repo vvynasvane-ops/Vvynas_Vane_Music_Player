@@ -557,37 +557,42 @@ button:active, .nav-item:active, .tabbar button:active, .song-row:active,
 .song-row.playing .title { color: var(--accent); }
 .song-row .sub { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .song-row .dur { font-size: 12px; color: var(--text-muted); flex: none; font-variant-numeric: tabular-nums; }
-.song-row .row-actions { display: flex; align-items: center; gap: 5px; flex: none; }
-/* Playlist-detail rows show 4 buttons (fav/queue/add/remove) instead of 3 —
-   tighten the gap slightly so the row doesn't crowd out the title on
-   narrow phones. */
-#view-playlist-detail .song-row .row-actions { gap: 3px; }
-@media (max-width: 380px) {
-  #view-playlist-detail .song-row .fav-btn,
-  #view-playlist-detail .song-row .more-btn,
-  #view-playlist-detail .song-row .queue-btn { padding: 5px; }
-}
-.song-row .fav-btn svg, .song-row .more-btn svg, .song-row .queue-btn svg { width: 17px; height: 17px; }
-.song-row .fav-btn, .song-row .more-btn, .song-row .queue-btn {
-  position: relative; /* anchor for the enlarged hit-area pseudo-element below */
-  padding: 6px; border-radius: 50%; color: var(--text-secondary);
+.song-row .row-actions { display: flex; align-items: center; flex: none; }
+/* Single kebab per row, sized to the actual ~44px recommended minimum
+   touch target (Apple HIG / Material) instead of three ~29px icons
+   competing with the row's own full-width play target — see the comment
+   on the SONG ACTIONS SHEET in index.html for why this replaced the old
+   fav/queue/more icon row. */
+.song-row .row-menu-btn {
+  position: relative;
+  width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; color: var(--text-secondary);
   background: var(--ripple); border: 1px solid var(--divider);
 }
-/* The visible circle is ~29px (17px icon + 6px padding) — well under the
-   ~44px minimum reliable touch target, and it sits directly on the row,
-   whose entire remaining surface plays the song. A real thumb missing the
-   tiny circle by a few px was landing on the row and triggering playback,
-   which read as "tapping favorite/queue/more plays audio". This invisible
-   ::after extends the actual hit area to ~44px on every side without
-   touching the button's visual size or the row's layout/spacing — a tap
-   inside the padded zone still resolves e.target to the <button> itself
-   (pseudo-elements aren't separately targetable), so the existing
-   data-action dispatch below keeps working unchanged. */
-.song-row .fav-btn::after, .song-row .more-btn::after, .song-row .queue-btn::after {
-  content: ""; position: absolute; inset: -8px;
+.song-row .row-menu-btn svg { width: 18px; height: 18px; }
+.song-row .row-menu-btn:hover, .song-row .row-menu-btn:active { color: var(--accent); background: var(--accent-dim); border-color: var(--accent-dark); }
+.song-row .row-menu-btn .fav-dot {
+  position: absolute; top: -1px; right: -1px; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent2); border: 1.5px solid var(--bg, #14110c);
 }
-.song-row .fav-btn.active { color: var(--accent2); background: var(--accent2-dim); border-color: rgba(178,34,34,.4); }
-.song-row .fav-btn:hover, .song-row .more-btn:hover, .song-row .queue-btn:hover { color: var(--accent); background: var(--accent-dim); border-color: var(--accent-dark); }
+@media (max-width: 380px) {
+  .song-row .row-menu-btn { width: 36px; height: 36px; }
+}
+
+/* ---------- Song actions sheet (⋮ menu) ---------- */
+.row-actions-sheet-title { min-width: 0; }
+.row-actions-sheet-title .t { font-family: var(--font-display); font-size: 14px; letter-spacing: .04em; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-actions-sheet-title .s { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-action-item {
+  display: flex; align-items: center; gap: 14px; width: 100%;
+  min-height: 48px; padding: 0 12px; border-radius: var(--radius-s);
+  color: var(--text); text-align: left; cursor: pointer;
+}
+.row-action-item:hover, .row-action-item:active { background: var(--ripple); }
+.row-action-item svg { width: 20px; height: 20px; flex: none; color: var(--accent); }
+.row-action-item.active svg { color: var(--accent2); }
+.row-action-item.danger { color: var(--accent2); }
+.row-action-item.danger svg { color: var(--accent2); }
 .song-row .index { width: 20px; flex: none; text-align: center; font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
 /* ---------- Multi-select mode (playlists / favorites / recently played) ---------- */
