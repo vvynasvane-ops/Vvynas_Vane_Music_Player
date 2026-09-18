@@ -1624,6 +1624,7 @@ function playlistRowHtml(song, index, playlistId) {
   const isPlaying = state.queue[state.queueIndex] === song.id;
   const selecting = state.selectMode;
   const selected = selecting && state.selectedIds.has(song.id);
+  const fav = state.favorites.has(song.id);
   return `
   <div class="song-row ${isPlaying ? "playing" : ""} ${selected ? "selected" : ""}" data-id="${song.id}" data-playlist-ctx="${playlistId}" tabindex="0" role="button">
     ${selecting ? `<span class="row-check" data-action="toggle-select" data-id="${song.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12l5 5L20 6"/></svg></span>` : ""}
@@ -1634,10 +1635,16 @@ function playlistRowHtml(song, index, playlistId) {
     </div>
     <span class="dur">${song.duration ? fmtTime(song.duration) : ""}</span>
     ${selecting ? "" : `<div class="row-actions">
+      <button class="fav-btn ${fav ? "active" : ""}" data-action="fav" data-id="${song.id}" title="Favorite">
+        <svg viewBox="0 0 24 24" fill="${fav ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 000-7.8z"/></svg>
+      </button>
       <button class="queue-btn" data-action="queue" data-id="${song.id}" title="Play next">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h9M4 12h9M4 18h9M17 6v12m0 0l-3-3m3 3l3-3"/></svg>
       </button>
-      <button class="more-btn" data-action="remove-from-playlist" data-id="${song.id}" data-playlist="${playlistId}" title="Remove">
+      <button class="more-btn" data-action="more" data-id="${song.id}" title="Add to playlist">
+        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+      </button>
+      <button class="more-btn" data-action="remove-from-playlist" data-id="${song.id}" data-playlist="${playlistId}" title="Remove from this playlist">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
     </div>`}
