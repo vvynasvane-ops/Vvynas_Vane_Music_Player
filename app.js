@@ -1788,11 +1788,25 @@ async function playSongId(songId, queueList) {
 }
 
 /** "Add up next" — inserts right after the currently playing track, or
- *  starts a fresh queue with it if nothing is playing yet. */
+ *  stages a fresh queue with it if nothing is queued yet. Either way this
+ *  only queues the song — it never starts playback on its own, matching
+ *  what the "Play next" button actually promises. */
 function addToQueueNext(songId) {
   const song = state.songs.find(s => s.id === songId);
   if (!song) return;
-  if (!state.queue.length) { playSongId(songId); return; }
+  if (!state.queue.length) {
+    // Nothing queued yet: make this the queue's first song so a later
+    // tap on Play has something to play, but don't start it ourselves —
+    // clicking "Play next" should queue, not play.
+    state.queue = [songId];
+    state.queueIndex = 0;
+    syncNowPlayingUI(song);
+    updateMediaSession(song);
+    toast(`Up next: ${song.title}`);
+    if (els.queueSheet.classList.contains("open")) renderQueueSheet();
+    render();
+    return;
+  }
   // If it's already queued somewhere, relocate it rather than duplicate it.
   const existingIndex = state.queue.indexOf(songId);
   if (existingIndex !== -1) {
@@ -2103,7 +2117,7 @@ function renderQueueSheet() {
     const song = state.songs.find(s => s.id === id);
     return song ? queueRowHtml(song, i) : "";
   }).join("");
-  els.queueList.innerHTML = items || emptyStateHtml("Queue is empty", "Play a song to build your queue.", '<path d="M4 6h16M4 12h10M4 18h16"/>');
+  els.queueList.innerHTML = items || emptyStateHtml("Queue is empty", "Play a song, or tap \"Play next\" on one, to build your queue.", '<path d="M4 6h16M4 12h10M4 18h16"/>');
 }
 function openQueue() { renderQueueSheet(); els.sheetOverlay.classList.add("open"); els.queueSheet.classList.add("open"); }
 function closeQueue() { els.sheetOverlay.classList.remove("open"); els.queueSheet.classList.remove("open"); }
@@ -2969,9 +2983,25 @@ els.queueList.addEventListener("click", (e) => {
   const rmBtn = e.target.closest('[data-action="remove-from-queue"]');
   if (rmBtn) {
     const idx = Number(rmBtn.dataset.queueIndex);
+    const removingCurrent = idx === state.queueIndex;
     state.queue.splice(idx, 1);
     if (idx < state.queueIndex) state.queueIndex--;
-    else if (idx === state.queueIndex) state.queueIndex = Math.min(state.queueIndex, state.queue.length - 1);
+    else if (removingCurrent) state.queueIndex = Math.min(state.queueIndex, state.queue.length - 1);
+    if (removingCurrent) {
+      // The song that was actually loaded/playing just got deleted out from
+      // under it — without this, audio keeps playing the removed track
+      // while queueIndex silently points somewhere else, so Next/Prev and
+      // the on-screen title immediately go out of sync with what's audible.
+      if (state.queue.length) {
+        loadAndPlayCurrent();
+      } else {
+        audio.pause();
+        audio.removeAttribute("src");
+        state.isPlaying = false;
+        setPlayIcon(false);
+        if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "none";
+      }
+    }
     renderQueueSheet();
     render();
     return;
