@@ -216,6 +216,18 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px;
 }
 
+/* ---------- Universal tap feedback — "literally clicking anything" gets
+   a fast, DJ-crossfader-style thump so every interaction feels alive,
+   not just the ones with their own dedicated animation below. ---------- */
+button, .nav-item, .tabbar button, .song-row, .playlist-card, .folder-card,
+.icon-btn, .row-check, .external-card-head .name, select {
+  transition: transform .14s cubic-bezier(.3,1,.4,1), filter .14s ease;
+}
+button:active, .nav-item:active, .tabbar button:active, .song-row:active,
+.playlist-card:active, .folder-card:active, .icon-btn:active, .row-check:active {
+  transform: scale(.94); filter: brightness(1.12);
+}
+
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--divider); border-radius: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -326,6 +338,44 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
   flex: 1; overflow-y: auto; padding: 4px 22px calc(var(--player-h) + 24px);
   background: rgba(0, 0, 0, var(--songlist-overlay-a, 0.37));
 }
+
+/* ---------------------------------------------------------------------
+   DJ-set view transitions — every navigateTo() call (nav items, tabbar,
+   playlist/folder cards, back buttons — see pickViewTransition/
+   playViewTransition in app.js) plays one of three mixer moves instead
+   of a hard cut, borrowed straight from the DJ playbook:
+     • dj-swap     — lateral moves between top-level tabs (Library ↔
+                     Playlists ↔ Folders ↔ Favorites ↔ Recent ↔
+                     External) → a quick EQ-kill crossfade: brightness/
+                     saturation punch settling to normal, like the bass
+                     swap landing on the downbeat.
+     • dj-drop     — going deeper (into a folder or a playlist) → a
+                     filter-sweep build (blur + desaturate) releasing
+                     into a hard, full-color drop.
+     • dj-spinback — coming back out → a vinyl brake: a quick reverse
+                     rotation that decelerates back to rest.
+   All three are neutralized by the prefers-reduced-motion rule above.
+   --------------------------------------------------------------------- */
+@keyframes djBassSwap {
+  0%   { opacity: 0; filter: brightness(1.55) saturate(1.5); transform: scale(.985); }
+  55%  { opacity: 1; filter: brightness(1.12) saturate(1.15); transform: scale(1.006); }
+  100% { opacity: 1; filter: brightness(1) saturate(1); transform: scale(1); }
+}
+.content-scroll.dj-swap { animation: djBassSwap .3s cubic-bezier(.2,.8,.3,1) both; }
+
+@keyframes djFilterDrop {
+  0%   { opacity: 0; filter: blur(7px) grayscale(1) brightness(.78); transform: scale(1.035); }
+  60%  { opacity: 1; filter: blur(2px) grayscale(.25) brightness(1.08); transform: scale(1.012); }
+  100% { opacity: 1; filter: blur(0) grayscale(0) brightness(1); transform: scale(1); }
+}
+.content-scroll.dj-drop { animation: djFilterDrop .38s cubic-bezier(.16,.9,.25,1) both; }
+
+@keyframes djSpinback {
+  0%   { opacity: 0; transform: rotate(-5deg) scale(.975); filter: brightness(.78); }
+  50%  { opacity: 1; transform: rotate(1.5deg) scale(1.008); filter: brightness(1.1); }
+  100% { opacity: 1; transform: rotate(0deg) scale(1); filter: brightness(1); }
+}
+.content-scroll.dj-spinback { animation: djSpinback .34s cubic-bezier(.22,1.05,.36,1) both; transform-origin: 50% 0%; }
 
 /* ---------- Connecting / scanning overlay (hourglass + status) ---------- */
 .connecting-card {
@@ -487,7 +537,6 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
   font-size: 13.5px; padding: 12px 22px; border-radius: 999px; width: 100%; margin-top: 12px; transition: all .2s;
 }
 .btn-secondary:hover { border-color: var(--accent-dark); color: var(--accent); background: var(--accent-dim); }
-.btn-primary:hover { border-color: var(--accent-dark); color: var(--accent); background: var(--accent-dim); }
 
 /* ---------- Song rows / grid ---------- */
 .section-label {
@@ -562,8 +611,14 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
   border-radius: var(--radius-s); padding: 11px 13px; font-size: 13.5px; outline: none; transition: border-color .15s;
 }
 .external-add-row input[type=text]:focus { border-color: var(--accent-dark); }
+.external-add-row select {
+  flex: none; background: var(--bg-card); border: 1px solid var(--divider); color: var(--text-primary);
+  border-radius: var(--radius-s); padding: 11px 10px; font-size: 12.5px; outline: none; max-width: 168px; cursor: pointer;
+}
+.external-add-row select:focus { border-color: var(--accent-dark); }
 .external-add-row button { flex: none; padding: 11px 18px; }
 .external-hint { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; margin: 0 0 18px; max-width: 640px; }
+.external-hint code { background: var(--bg-card2); border-radius: 4px; padding: 1px 5px; font-size: 11px; }
 .external-card {
   background: var(--bg-card); border: 1px solid var(--divider); border-radius: var(--radius-m);
   padding: 14px; margin-bottom: 16px;
@@ -574,6 +629,14 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
   font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; color: var(--accent);
   background: var(--accent-dim); border: 1px solid var(--accent-dark); border-radius: 999px; padding: 2px 8px; margin-left: 8px; vertical-align: middle;
 }
+.ext-badge-youtube { color: #ff5252; background: rgba(255,82,82,.12); border-color: rgba(255,82,82,.35); }
+.ext-badge-spotify { color: #1ed760; background: rgba(30,215,96,.12); border-color: rgba(30,215,96,.35); }
+.ext-badge-soundcloud { color: #ff8a00; background: rgba(255,138,0,.12); border-color: rgba(255,138,0,.35); }
+.ext-badge-applemusic { color: #fc3c66; background: rgba(252,60,102,.12); border-color: rgba(252,60,102,.35); }
+.ext-badge-deezer { color: #a238ff; background: rgba(162,56,255,.12); border-color: rgba(162,56,255,.35); }
+.ext-badge-mixcloud { color: #52aad8; background: rgba(82,170,216,.12); border-color: rgba(82,170,216,.35); }
+.ext-badge-stream { color: #22c98f; background: rgba(34,201,143,.12); border-color: rgba(34,201,143,.35); }
+.ext-badge-custom { color: var(--accent); background: var(--accent-dim); border-color: var(--accent-dark); }
 .ext-actions { display: flex; align-items: center; gap: 6px; flex: none; }
 .ext-note {
   font-size: 11px; color: var(--text-muted); background: var(--accent2-dim); border: 1px solid rgba(178,34,34,.3);
@@ -581,6 +644,8 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 }
 .external-embed-wrap { position: relative; width: 100%; padding-top: 56.25%; border-radius: var(--radius-s); overflow: hidden; background: #000; }
 .external-embed-wrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.external-embed-wrap.fixed { padding-top: 0; background: transparent; }
+.external-embed-wrap.fixed iframe { position: static; }
 
 .empty-state {
   display: flex; flex-direction: column; align-items: center; text-align: center;
@@ -673,6 +738,38 @@ button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
 .player-scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; align-items: center; padding: 10px 28px calc(24px + var(--safe-bottom)); }
 .player-art-wrap { width: min(300px, 62vw); aspect-ratio: 1; margin: 10px 0 26px; border-radius: 18px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.5); flex: none; position: relative; }
 .player-art-wrap .art { width: 100%; height: 100%; }
+
+/* ---------------------------------------------------------------------
+   Play / Pause transitions — see triggerLoopTighten() / triggerEchoOut()
+   in app.js, wired into togglePlay(). Hitting Play "tightens" the
+   artwork like a loop building into a drop; hitting Pause leaves an
+   echo/delay tail — a few fading, growing ghost copies — behind, the
+   same way an echo-out lets a track dissolve rather than cut dead.
+   --------------------------------------------------------------------- */
+@keyframes djLoopTighten {
+  0%   { transform: scale(1); filter: brightness(1) saturate(1); }
+  20%  { transform: scale(.92); filter: brightness(1.22) saturate(1.3); }
+  45%  { transform: scale(1.07); filter: brightness(1.4) saturate(1.4); }
+  70%  { transform: scale(.97); filter: brightness(1.08) saturate(1.05); }
+  100% { transform: scale(1); filter: brightness(1) saturate(1); }
+}
+.dj-loop-tighten { animation: djLoopTighten .55s cubic-bezier(.3,1.3,.4,1) both; }
+
+@keyframes djEchoFade {
+  0%   { opacity: .5; transform: scale(1); filter: blur(0); }
+  100% { opacity: 0; transform: scale(1.22); filter: blur(3px); }
+}
+.dj-echo-ghost { animation: djEchoFade .5s ease-out both; border-radius: inherit; }
+
+/* Little "pop" synced with the play/pause icon's shape-shift above,
+   independent of the universal :active press so the two don't fight. */
+@keyframes djIconMorphPulse {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.22); }
+  100% { transform: scale(1); }
+}
+.dj-icon-morph { animation: djIconMorphPulse .32s cubic-bezier(.3,1.4,.4,1) both; }
+
 /* Edit / reset album-art buttons overlaid on the full-player artwork */
 .art-edit-btn, .art-reset-btn {
   position: absolute; bottom: 10px; right: 10px; width: 36px; height: 36px; border-radius: 999px;

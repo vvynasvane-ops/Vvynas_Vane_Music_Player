@@ -209,7 +209,7 @@
     </div>
     <div class="controls">
       <button id="miniPrevBtn" title="Previous"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l10-6v12z"/></svg></button>
-      <button id="miniPlayBtn" class="play-btn" title="Play/Pause"><svg viewBox="0 0 24 24" fill="currentColor" id="miniPlayIcon"><path d="M8 5v14l11-7z"/></svg></button>
+      <button id="miniPlayBtn" class="play-btn" title="Play/Pause"><svg viewBox="0 0 24 24" fill="currentColor" id="miniPlayIcon"><path id="miniPlayIconPath" d="M8,5 L10.82,6.79 L13.63,8.58 L16.45,10.37 L18.73,12.17 L15.91,13.97 L13.09,15.76 L10.28,17.55 L8,18.36 L8,15.02 L8,11.68 L8,8.34 Z"><animate id="miniPlayIconAnimate" attributeName="d" dur="0.32s" fill="freeze" begin="indefinite" calcMode="spline" keySplines="0.3 1 0.4 1"/></path></svg></button>
       <button id="miniNextBtn" title="Next"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM4.5 6l10 6-10 6z"/></svg></button>
     </div>
   </div>
@@ -272,7 +272,7 @@
       <div class="player-controls">
         <button class="pc-toggle" id="shuffleBtn" title="Shuffle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h4l9 16h3M4 20h4l3-5.2M17 4h3v3M14 8.5L17 4M17 20v-3l3 0"/></svg></button>
         <button class="pc-skip" id="prevBtn" title="Previous"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l10-6v12z"/></svg></button>
-        <button class="pc-play" id="playBtn" title="Play/Pause"><svg viewBox="0 0 24 24" fill="currentColor" id="playIcon"><path d="M8 5v14l11-7z"/></svg></button>
+        <button class="pc-play" id="playBtn" title="Play/Pause"><svg viewBox="0 0 24 24" fill="currentColor" id="playIcon"><path id="playIconPath" d="M8,5 L10.82,6.79 L13.63,8.58 L16.45,10.37 L18.73,12.17 L15.91,13.97 L13.09,15.76 L10.28,17.55 L8,18.36 L8,15.02 L8,11.68 L8,8.34 Z"><animate id="playIconAnimate" attributeName="d" dur="0.32s" fill="freeze" begin="indefinite" calcMode="spline" keySplines="0.3 1 0.4 1"/></path></svg></button>
         <button class="pc-skip" id="nextBtn" title="Next"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM4.5 6l10 6-10 6z"/></svg></button>
         <button class="pc-toggle" id="repeatBtn" title="Repeat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 2l4 4-4 4M3 11V9a4 4 0 014-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 01-4 4H3"/></svg></button>
       </div>

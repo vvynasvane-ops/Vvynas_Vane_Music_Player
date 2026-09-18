@@ -98,6 +98,8 @@ const els = {
   miniArtist: $("#miniArtist"),
   miniPlayBtn: $("#miniPlayBtn"),
   miniPlayIcon: $("#miniPlayIcon"),
+  miniPlayIconPath: $("#miniPlayIconPath"),
+  miniPlayIconAnimate: $("#miniPlayIconAnimate"),
   miniPrevBtn: $("#miniPrevBtn"),
   miniNextBtn: $("#miniNextBtn"),
   miniProgressFill: $("#miniProgressFill"),
@@ -121,6 +123,8 @@ const els = {
   prevBtn: $("#prevBtn"),
   playBtn: $("#playBtn"),
   playIcon: $("#playIcon"),
+  playIconPath: $("#playIconPath"),
+  playIconAnimate: $("#playIconAnimate"),
   nextBtn: $("#nextBtn"),
   repeatBtn: $("#repeatBtn"),
   favBtn: $("#favBtn"),
@@ -1198,48 +1202,212 @@ async function removeSongsFromPlaylist(playlistId, songIds) {
 }
 
 /* ---------------------------------------------------------------------
-   External playlists — connect an outside playlist (e.g. a public
-   YouTube playlist or channel) and play it right here via an iframe.
-   No API key/backend: a pasted playlist/channel link or ID resolves to
-   an exact embed; a bare name/handle falls back to a best-effort
-   YouTube search embed, since resolving a name to an ID client-side
-   isn't possible without the YouTube Data API.
+   External playlists — connect an outside playlist from pretty much any
+   embeddable source and play it right here via an iframe (or a native
+   <audio> element for direct streams). No backend, no API keys:
+     • YouTube      → playlist/channel link or ID → exact embed;
+                       channel ID is converted UC…→UU… to reach its
+                       public "uploads" playlist (a real, documented
+                       trick, no Data API needed)
+     • Spotify      → open.spotify.com or spotify: URI for a playlist,
+                       album, track, artist, show or episode → the
+                       public open.spotify.com/embed/… player
+     • SoundCloud   → any soundcloud.com URL (track, set, or profile)
+                       passed straight into SoundCloud's public widget
+     • Apple Music  → any music.apple.com link → swapped to
+                       embed.music.apple.com, Apple's public embed host
+     • Deezer       → deezer.com playlist/album/artist/track link →
+                       Deezer's public widget.deezer.com player
+     • Mixcloud     → any mixcloud.com show/playlist/artist link → its
+                       public widget iframe
+     • Direct audio → a raw .mp3/.m4a/.aac/.ogg/.opus/.wav/.flac link,
+                       or any stream URL when "Direct audio link" is
+                       picked explicitly → a native <audio> player
+                       (great for internet radio / self-hosted files)
+     • Custom       → paste any other site's own "Embed" <iframe> code
+                       (Bandcamp, Twitch, a podcast player, etc.) and
+                       its src is lifted straight into the card; a bare
+                       link no other rule recognizes is tried as-is too
+   None of these need a key because each platform already exposes a
+   public, embeddable player for its own content — the only thing that
+   can't be done client-side without a real API key is resolving a bare
+   *name* to an exact ID, so a name only gets a live embed on YouTube
+   (its search embed is public); elsewhere a bare name becomes a
+   "search there, then paste the link back" card instead of guessing.
    --------------------------------------------------------------------- */
+const SOURCE_META = {
+  youtube:    { label: "YouTube" },
+  spotify:    { label: "Spotify" },
+  soundcloud: { label: "SoundCloud" },
+  applemusic: { label: "Apple Music" },
+  deezer:     { label: "Deezer" },
+  mixcloud:   { label: "Mixcloud" },
+  stream:     { label: "Direct Audio" },
+  custom:     { label: "Custom Embed" },
+};
+const EMBED_FIXED_HEIGHT = { spotify: 380, soundcloud: 300, applemusic: 450, deezer: 300, mixcloud: 120 };
+
+function tryUrl(input) {
+  try { return new URL(/^https?:\/\//i.test(input) ? input : "https://" + input); } catch { return null; }
+}
+function normalizeUrl(input) {
+  const t = input.trim();
+  return /^https?:\/\//i.test(t) ? t : "https://" + t;
+}
+function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+function detectSource(raw) {
+  if (/<iframe[^>]*\ssrc=/i.test(raw)) return "custom";
+  if (/spotify\.com|^spotify:/i.test(raw)) return "spotify";
+  if (/soundcloud\.com/i.test(raw)) return "soundcloud";
+  if (/music\.apple\.com/i.test(raw)) return "applemusic";
+  if (/deezer\.com/i.test(raw)) return "deezer";
+  if (/mixcloud\.com/i.test(raw)) return "mixcloud";
+  if (/\.(mp3|m4a|aac|ogg|opus|wav|flac)(\?|#|$)/i.test(raw)) return "stream";
+  if (/youtube\.com|youtu\.be/i.test(raw)) return "youtube";
+  if (/^https?:\/\//i.test(raw.trim())) return "custom";
+  return "youtube"; // bare text with no recognizable domain — YouTube is the only source with a public search embed
+}
+
 function parseYouTubeInput(raw) {
   const input = (raw || "").trim();
-  if (!input) return null;
   if (/youtube\.com|youtu\.be/i.test(input)) {
-    try {
-      const url = new URL(/^https?:\/\//i.test(input) ? input : "https://" + input);
+    const url = tryUrl(input);
+    if (url) {
       const listParam = url.searchParams.get("list");
       if (listParam) return { type: /^UU/.test(listParam) ? "channel" : "playlist", embedId: listParam };
       const chMatch = url.pathname.match(/\/channel\/(UC[\w-]{10,})/);
       if (chMatch) return { type: "channel", embedId: "UU" + chMatch[1].slice(2) };
       const handleMatch = url.pathname.match(/\/(?:@|c\/|user\/)([^/?#]+)/);
       if (handleMatch) return { type: "search", query: decodeURIComponent(handleMatch[1]).replace(/^@/, "") };
-    } catch { /* not a valid URL — fall through to plain-text handling below */ }
+    }
   }
   if (/^(PL|UU|LL|FL|OLAK5uy_)[\w-]{10,}$/.test(input)) return { type: input.startsWith("UU") ? "channel" : "playlist", embedId: input };
   if (/^UC[\w-]{10,}$/.test(input)) return { type: "channel", embedId: "UU" + input.slice(2) };
   return { type: "search", query: input.replace(/^@/, "") };
 }
+function parseSpotifyInput(input) {
+  let kind = null, id = null;
+  const uriMatch = input.match(/^spotify:(playlist|album|track|artist|show|episode):([A-Za-z0-9]+)/i);
+  if (uriMatch) { kind = uriMatch[1].toLowerCase(); id = uriMatch[2]; }
+  else {
+    const url = tryUrl(input);
+    const m = url && url.pathname.match(/\/(playlist|album|track|artist|show|episode)\/([A-Za-z0-9]+)/i);
+    if (m) { kind = m[1].toLowerCase(); id = m[2]; }
+  }
+  return id ? { type: "embed", kind, embedId: id } : { type: "search", query: input };
+}
+function parseSoundcloudInput(input) {
+  const url = tryUrl(input);
+  return (url && /soundcloud\.com/i.test(url.hostname)) ? { type: "embed", url: url.href } : { type: "search", query: input };
+}
+function parseAppleMusicInput(input) {
+  const url = tryUrl(input);
+  return (url && /music\.apple\.com/i.test(url.hostname)) ? { type: "embed", url: url.href } : { type: "search", query: input };
+}
+function parseDeezerInput(input) {
+  const url = tryUrl(input);
+  const m = url && url.pathname.match(/\/(playlist|album|artist|track)\/(\d+)/i);
+  return m ? { type: "embed", kind: m[1].toLowerCase(), embedId: m[2] } : { type: "search", query: input };
+}
+function parseMixcloudInput(input) {
+  const url = tryUrl(input);
+  return (url && /mixcloud\.com/i.test(url.hostname)) ? { type: "embed", url: url.href } : { type: "search", query: input };
+}
+function parseCustomInput(input) {
+  const iframeMatch = input.match(/<iframe[^>]*\ssrc=["']([^"']+)["']/i);
+  const extracted = iframeMatch ? iframeMatch[1] : (/^https?:\/\//i.test(input.trim()) ? input.trim() : null);
+  if (!extracted) return { type: "search", query: input };
+  const redetected = detectSource(extracted);
+  if (redetected !== "custom") return { source: redetected, ...buildSourceItem(extracted, redetected) };
+  return { type: "embed", url: extracted };
+}
+function buildSourceItem(input, source) {
+  switch (source) {
+    case "spotify": return parseSpotifyInput(input);
+    case "soundcloud": return parseSoundcloudInput(input);
+    case "applemusic": return parseAppleMusicInput(input);
+    case "deezer": return parseDeezerInput(input);
+    case "mixcloud": return parseMixcloudInput(input);
+    case "stream": return { type: "audio", url: normalizeUrl(input) };
+    case "custom": return parseCustomInput(input);
+    case "youtube": default: return parseYouTubeInput(input);
+  }
+}
+function buildExternalItem(raw, forcedSource) {
+  const input = raw.trim();
+  const source = (forcedSource && forcedSource !== "auto") ? forcedSource : detectSource(input);
+  return { source, ...buildSourceItem(input, source) };
+}
+
+function externalSearchUrl(source, query) {
+  const q = encodeURIComponent(query);
+  switch (source) {
+    case "youtube": return `https://www.youtube.com/results?search_query=${q}`;
+    case "spotify": return `https://open.spotify.com/search/${q}`;
+    case "soundcloud": return `https://soundcloud.com/search?q=${q}`;
+    case "applemusic": return `https://music.apple.com/search?term=${q}`;
+    case "deezer": return `https://www.deezer.com/search/${q}`;
+    case "mixcloud": return `https://www.mixcloud.com/search/?q=${q}`;
+    default: return null;
+  }
+}
+function buildEmbed(item) {
+  const source = item.source || "youtube";
+  switch (source) {
+    case "youtube":
+      return item.type === "search"
+        ? { embedSrc: `https://www.youtube.com/embed?listType=search&list=${encodeURIComponent(item.query)}`, openHref: externalSearchUrl("youtube", item.query) }
+        : { embedSrc: `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(item.embedId)}`, openHref: `https://www.youtube.com/playlist?list=${encodeURIComponent(item.embedId)}` };
+    case "spotify":
+      return item.type === "embed"
+        ? { embedSrc: `https://open.spotify.com/embed/${item.kind}/${item.embedId}?utm_source=generator&theme=0`, openHref: `https://open.spotify.com/${item.kind}/${item.embedId}` }
+        : { embedSrc: null, openHref: externalSearchUrl("spotify", item.query) };
+    case "soundcloud":
+      return item.type === "embed"
+        ? { embedSrc: `https://w.soundcloud.com/player/?url=${encodeURIComponent(item.url)}&color=%23b98bff&auto_play=false&show_user=true&visual=false`, openHref: item.url }
+        : { embedSrc: null, openHref: externalSearchUrl("soundcloud", item.query) };
+    case "applemusic":
+      return item.type === "embed"
+        ? { embedSrc: item.url.replace("music.apple.com", "embed.music.apple.com"), openHref: item.url }
+        : { embedSrc: null, openHref: externalSearchUrl("applemusic", item.query) };
+    case "deezer":
+      return item.type === "embed"
+        ? { embedSrc: `https://widget.deezer.com/widget/dark/${item.kind}/${item.embedId}`, openHref: `https://www.deezer.com/${item.kind}/${item.embedId}` }
+        : { embedSrc: null, openHref: externalSearchUrl("deezer", item.query) };
+    case "mixcloud":
+      return item.type === "embed"
+        ? { embedSrc: `https://www.mixcloud.com/widget/iframe/?hide_cover=1&light=1&feed=${encodeURIComponent(item.url)}`, openHref: item.url }
+        : { embedSrc: null, openHref: externalSearchUrl("mixcloud", item.query) };
+    case "stream":
+      return { embedSrc: item.url, openHref: item.url, isAudio: true };
+    case "custom":
+      return item.type === "embed" ? { embedSrc: item.url, openHref: item.url } : { embedSrc: null, openHref: null };
+    default:
+      return { embedSrc: null, openHref: null };
+  }
+}
+
 async function saveExternalPlaylists() { await idbSet("kv", "externalPlaylists", state.externalPlaylists); }
 async function addExternalPlaylist() {
   const nameEl = document.getElementById("externalPlaylistNameInput");
   const inputEl = document.getElementById("externalPlaylistInput");
+  const sourceEl = document.getElementById("externalPlaylistSourceSelect");
   if (!inputEl) return;
-  const parsed = parseYouTubeInput(inputEl.value);
-  if (!parsed) { toast("Paste a link, ID, or name first"); return; }
+  const raw = inputEl.value;
+  if (!raw.trim()) { toast("Paste a link, ID, or name first"); return; }
+  const parsed = buildExternalItem(raw, sourceEl ? sourceEl.value : "auto");
+  const meta = SOURCE_META[parsed.source] || SOURCE_META.youtube;
   const customName = nameEl && nameEl.value.trim();
-  const fallbackName = parsed.type === "search" ? parsed.query
-    : parsed.type === "channel" ? "Channel uploads" : "YouTube playlist";
+  const fallbackName = parsed.type === "search" ? (parsed.query || meta.label)
+    : parsed.kind ? `${meta.label} ${capitalize(parsed.kind)}` : meta.label;
   const item = { id: "ext_" + Date.now().toString(36), name: customName || fallbackName, ...parsed };
   state.externalPlaylists.push(item);
   await saveExternalPlaylists();
   inputEl.value = "";
   if (nameEl) nameEl.value = "";
   render();
-  toast(parsed.type === "search" ? "Added — showing best-effort search results" : "External playlist added");
+  toast(parsed.type === "embed" || parsed.type === "audio" ? `${meta.label} connected` : `Added — open it on ${meta.label} and paste the exact link for a full embed`);
 }
 async function removeExternalPlaylist(id) {
   state.externalPlaylists = state.externalPlaylists.filter(p => p.id !== id);
@@ -1477,30 +1645,32 @@ function playlistRowHtml(song, index, playlistId) {
 }
 
 function externalCardHtml(item) {
-  const embedSrc = item.type === "search"
-    ? `https://www.youtube.com/embed?listType=search&list=${encodeURIComponent(item.query)}`
-    : `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(item.embedId)}`;
-  const openHref = item.type === "search"
-    ? `https://www.youtube.com/results?search_query=${encodeURIComponent(item.query)}`
-    : `https://www.youtube.com/playlist?list=${encodeURIComponent(item.embedId)}`;
-  const badge = item.type === "search" ? "Search" : item.type === "channel" ? "Channel uploads" : "Playlist";
+  const source = item.source || "youtube";
+  const meta = SOURCE_META[source] || SOURCE_META.custom;
+  const { embedSrc, openHref, isAudio } = buildEmbed(item);
+  const fixedH = EMBED_FIXED_HEIGHT[source];
+  const noEmbed = !embedSrc;
   return `
   <div class="external-card">
     <div class="external-card-head">
-      <div class="name">${escapeHtml(item.name)}<span class="ext-badge">${badge}</span></div>
+      <div class="name">${escapeHtml(item.name)}<span class="ext-badge ext-badge-${source}">${meta.label}</span></div>
       <div class="ext-actions">
-        <a class="icon-btn" href="${openHref}" target="_blank" rel="noopener noreferrer" title="Open in YouTube">
+        ${openHref ? `<a class="icon-btn" href="${openHref}" target="_blank" rel="noopener noreferrer" title="Open externally">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><path d="M15 3h6v6"/><path d="M10 14L21 3"/></svg>
-        </a>
+        </a>` : ""}
         <button class="icon-btn" data-action="remove-external" data-id="${item.id}" title="Remove">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
       </div>
     </div>
-    ${item.type === "search" ? `<div class="ext-note">Best-effort YouTube search results for “${escapeHtml(item.query)}” — this isn't guaranteed to be the exact channel or playlist. Open it in YouTube to confirm, then paste the real playlist link back here (above) for a precise, permanent embed.</div>` : ""}
-    <div class="external-embed-wrap">
-      <iframe src="${embedSrc}" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen title="${escapeHtml(item.name)}"></iframe>
-    </div>
+    ${item.type === "search" && source === "youtube" ? `<div class="ext-note">Best-effort YouTube search results for “${escapeHtml(item.query)}” — this isn't guaranteed to be the exact channel or playlist. Open it in YouTube to confirm, then paste the real playlist link back here (above) for a precise, permanent embed.</div>` : ""}
+    ${noEmbed ? `<div class="ext-note">${meta.label} doesn't support an embeddable live search here. ${openHref ? `Use the open button to search ${meta.label} directly, then paste the exact playlist/track/album link back here for a full player.` : "Paste a working link or an &lt;iframe&gt; embed code for this to play here."}</div>` : ""}
+    ${embedSrc ? (isAudio
+      ? `<audio controls preload="none" src="${embedSrc}" style="width:100%;"></audio>`
+      : fixedH
+        ? `<div class="external-embed-wrap fixed" style="height:${fixedH}px;"><iframe src="${embedSrc}" loading="lazy" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" title="${escapeHtml(item.name)}"></iframe></div>`
+        : `<div class="external-embed-wrap"><iframe src="${embedSrc}" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen title="${escapeHtml(item.name)}"></iframe></div>`
+    ) : ""}
   </div>`;
 }
 function renderExternalView() {
@@ -1508,16 +1678,29 @@ function renderExternalView() {
   els.viewExternal.innerHTML = `
     <div class="section-label">External Playlists</div>
     <div class="external-add-row">
+      <select id="externalPlaylistSourceSelect" title="Source">
+        <option value="auto">Auto-detect</option>
+        <option value="youtube">YouTube</option>
+        <option value="spotify">Spotify</option>
+        <option value="soundcloud">SoundCloud</option>
+        <option value="applemusic">Apple Music</option>
+        <option value="deezer">Deezer</option>
+        <option value="mixcloud">Mixcloud</option>
+        <option value="stream">Direct audio link</option>
+        <option value="custom">Custom embed / other</option>
+      </select>
       <input type="text" id="externalPlaylistNameInput" placeholder="Name (optional)" maxlength="60">
-      <input type="text" id="externalPlaylistInput" placeholder="YouTube playlist or channel link, or a name to search…" maxlength="300">
+      <input type="text" id="externalPlaylistInput" placeholder="Paste a link, a stream URL, an &lt;iframe&gt; embed code, or a name to search…" maxlength="500">
       <button class="btn-primary" style="margin-top:0;" data-action="add-external">Add</button>
     </div>
-    <p class="external-hint">Paste a playlist link (youtube.com/playlist?list=…) or a channel link/ID for an exact,
-      permanent embed. Typing just a channel or playlist name searches YouTube instead — open the result to confirm
-      it's the right one, then paste its real playlist link back here. Nothing here ever touches your local library;
-      it plays straight from YouTube in the box below.</p>
+    <p class="external-hint">Paste a playlist, album, track or channel link from <strong>YouTube</strong>, <strong>Spotify</strong>,
+      <strong>SoundCloud</strong>, <strong>Apple Music</strong>, <strong>Deezer</strong> or <strong>Mixcloud</strong> and it plays
+      right here. A direct audio link (.mp3, .m4a, .ogg, .flac — internet radio, self-hosted files) gets a native player. Anything
+      else — Bandcamp, Twitch, a podcast, whatever else has its own "Embed" option — paste that site's &lt;iframe&gt; code and it
+      drops straight in. Typing just a name searches YouTube live, the only source here with a public search embed; for other
+      platforms, search there first and paste the exact link back. Nothing here touches your local library.</p>
     ${list.length ? list.map(externalCardHtml).join("") : emptyStateHtml("No external playlists yet",
-      "Add a public YouTube playlist or channel above — it plays right here, no downloads needed.",
+      "Connect a playlist from YouTube, Spotify, SoundCloud, Apple Music, Deezer, Mixcloud, a direct audio stream, or any other embeddable source above.",
       '<path d="M15 10l4.55-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.45.894L15 14M5 6h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2z"/>')}
   `;
 }
@@ -1552,13 +1735,33 @@ function render() {
   render._lastView = v;
 }
 
+/* ---------------------------------------------------------------------
+   DJ-set view transitions — see the matching CSS block above
+   .content-scroll for what each move looks like.
+   --------------------------------------------------------------------- */
+const DJ_DETAIL_VIEWS = new Set(["folder-detail", "playlist-detail"]);
+function pickViewTransition(fromView, toView) {
+  if (DJ_DETAIL_VIEWS.has(toView) && !DJ_DETAIL_VIEWS.has(fromView)) return "drop";
+  if (!DJ_DETAIL_VIEWS.has(toView) && DJ_DETAIL_VIEWS.has(fromView)) return "spinback";
+  return "swap";
+}
+function playViewTransition(kind) {
+  const el = els.contentScroll;
+  if (!el) return;
+  el.classList.remove("dj-swap", "dj-drop", "dj-spinback");
+  void el.offsetWidth; // reflow so the animation restarts even on back-to-back navigations
+  el.classList.add(`dj-${kind}`);
+}
 function navigateTo(view) {
+  const fromView = state.currentView;
+  const transitionKind = pickViewTransition(fromView, view);
   state.currentView = view;
   state.selectMode = false;
   state.selectedIds.clear();
   els.navItems.forEach(b => b.classList.toggle("active", b.dataset.view === view));
   els.tabbarBtns.forEach(b => b.classList.toggle("active", b.dataset.view === view));
   render();
+  playViewTransition(transitionKind);
 }
 
 /* ---------------------------------------------------------------------
@@ -1694,18 +1897,80 @@ function syncPlayerFavIcon() {
   els.favBtn.querySelector("svg").setAttribute("fill", fav ? "currentColor" : "none");
   els.favBtn.style.color = fav ? "var(--accent2)" : "";
 }
+/* ---------------------------------------------------------------------
+   Play/Pause icon — a genuine shape-shift, not a hard swap. Both the
+   triangle and the twin bars are expressed as the same 12-point closed
+   polygon (the triangle is just the twin-bars' 12 corners resampled
+   evenly around its own perimeter, and the bars are drawn as one path
+   with a hairline "slit" between them so they still read as two
+   separate rectangles at rest). Same point count + same command order
+   on both ends means the browser can tween every point in a straight
+   line from one shape to the other — the SMIL <animate> on each <path>
+   (see index.html) plays that tween; setAttribute below guarantees the
+   resting shape is still correct even if SMIL somehow isn't available.
+   --------------------------------------------------------------------- */
+const PLAY_ICON_D = "M8,5 L10.82,6.79 L13.63,8.58 L16.45,10.37 L18.73,12.17 L15.91,13.97 L13.09,15.76 L10.28,17.55 L8,18.36 L8,15.02 L8,11.68 L8,8.34 Z";
+const PAUSE_ICON_D = "M7,5 L11,5 L11,12 L13,12 L13,5 L17,5 L17,19 L13,19 L13,12 L11,12 L11,19 L7,19 Z";
+function morphPlayIcon(pathEl, animateEl, playing) {
+  if (!pathEl) return;
+  const from = pathEl.getAttribute("d");
+  const to = playing ? PAUSE_ICON_D : PLAY_ICON_D;
+  if (from === to) return;
+  pathEl.setAttribute("d", to);
+  if (animateEl) {
+    animateEl.setAttribute("from", from);
+    animateEl.setAttribute("to", to);
+    try { animateEl.beginElement(); } catch (e) { /* SMIL restart unsupported in a handful of older embedded webviews — the setAttribute above already leaves the correct final shape */ }
+  }
+  const svg = pathEl.closest("svg");
+  if (svg) { svg.classList.remove("dj-icon-morph"); void svg.offsetWidth; svg.classList.add("dj-icon-morph"); }
+}
 function setPlayIcon(playing) {
-  const pathPlay = '<path d="M8 5v14l11-7z"/>';
-  const pathPause = '<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>';
-  els.playIcon.innerHTML = playing ? pathPause : pathPlay;
-  els.miniPlayIcon.innerHTML = playing ? pathPause : pathPlay;
+  morphPlayIcon(els.playIconPath, els.playIconAnimate, playing);
+  morphPlayIcon(els.miniPlayIconPath, els.miniPlayIconAnimate, playing);
+}
+
+/* ---------------------------------------------------------------------
+   Play / Pause transitions — see the matching CSS block above
+   .player-art-wrap for what each move looks like.
+   --------------------------------------------------------------------- */
+function triggerLoopTighten() {
+  [els.playerArt, els.miniArt].forEach(el => {
+    if (!el) return;
+    el.classList.remove("dj-loop-tighten"); void el.offsetWidth;
+    el.classList.add("dj-loop-tighten");
+  });
+}
+function triggerEchoOut(artEl) {
+  if (!artEl) return;
+  if (getComputedStyle(artEl).position === "static") artEl.style.position = "relative";
+  for (let i = 0; i < 3; i++) {
+    const ghost = artEl.cloneNode(true);
+    ghost.removeAttribute("id");
+    ghost.classList.add("dj-echo-ghost");
+    ghost.style.position = "absolute";
+    ghost.style.inset = "0";
+    ghost.style.margin = "0";
+    ghost.style.pointerEvents = "none";
+    ghost.style.animationDelay = `${i * 90}ms`;
+    artEl.appendChild(ghost);
+    setTimeout(() => ghost.remove(), 650 + i * 90);
+  }
 }
 
 function togglePlay() {
   if (!audio.src) return;
   RageMode.ensureAudioGraph();
-  if (audio.paused) { audio.play().catch(()=>{}); state.isPlaying = true; }
-  else { audio.pause(); state.isPlaying = false; }
+  if (audio.paused) {
+    audio.play().catch(()=>{});
+    state.isPlaying = true;
+    triggerLoopTighten();
+  } else {
+    audio.pause();
+    state.isPlaying = false;
+    triggerEchoOut(els.playerArt);
+    triggerEchoOut(els.miniArt);
+  }
   setPlayIcon(state.isPlaying);
   if ("mediaSession" in navigator) navigator.mediaSession.playbackState = state.isPlaying ? "playing" : "paused";
 }
