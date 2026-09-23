@@ -112,7 +112,9 @@
   <h1>Video Player</h1>
   <button class="icon-btn cc-btn" id="ccBtn" title="Subtitles (press V)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M7 11.5h2M7 14h4M15 11.5h2M15 14h2"/></svg></button>
   <button class="icon-btn hidden" id="audBtn" title="Audio language"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 010 7"/></svg></button>
-  <button class="icon-btn" id="fullscreenBtn" title="Fullscreen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg></button>
+  <button class="icon-btn" id="eqBtn" title="Equalizer" aria-label="Equalizer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></button>
+  <button class="icon-btn" id="kbBtn" title="Keyboard shortcuts" aria-label="Keyboard shortcuts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></button>
+  <button class="icon-btn" id="fullscreenBtn" title="Fullscreen (F)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg></button>
 </header>
 
 <div id="grantSection" class="vp-grant">
@@ -133,6 +135,7 @@
   <div class="vp-stage" id="vpStage">
     <div class="vp-empty-stage" id="vpEmptyStage">Select a file below to play</div>
     <video id="vpVideo" class="hidden" playsinline controls-list="nodownload"></video>
+    <div class="vp-osd" id="vpOsd" role="status" aria-live="polite"></div>
   </div>
   <div id="vpWarning" class="vp-warning hidden">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4m0 4h.01M10.29 3.86l-8.18 14.18A2 2 0 003.82 21h16.36a2 2 0 001.71-2.96L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
@@ -149,8 +152,13 @@
   </div>
   <div class="vp-seek-row">
     <span id="vpCur">0:00</span>
-    <input type="range" id="vpSeek" min="0" max="100" value="0" step="0.1">
+    <input type="range" class="vp-seek" id="vpSeek" min="0" max="100" value="0" step="0.1" title="Playback position — the softer fill ahead of it shows how much has finished loading">
     <span id="vpTotal">0:00</span>
+  </div>
+  <div class="vp-volume-row" id="vpVolumeRow">
+    <button class="vol-mute-btn" id="vpMuteBtn" title="Mute / Unmute (M)" aria-label="Mute / Unmute"><svg viewBox="0 0 24 24" id="vpVolIcon"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 010 7M19 5a10 10 0 010 14"/></svg></button>
+    <input type="range" class="vol-slider" id="vpVolSlider" min="0" max="100" step="1" value="100" aria-label="Volume" title="Volume (Shift + ↑ / ↓)">
+    <span class="vol-value" id="vpVolValue">100%</span>
   </div>
 
   <div class="vp-search-wrap" id="vpSearchWrap">
@@ -182,6 +190,16 @@
   </div>
 </div>
 
+<!-- Keyboard shortcuts notice -->
+<div class="modal-overlay" id="kbModalOverlay">
+  <div class="cc-modal" style="max-height:85vh;overflow-y:auto;">
+    <h3>Keyboard Shortcuts</h3>
+    <div class="shortcut-list" id="shortcutList"></div>
+    <div class="shortcut-note" id="shortcutNote"></div>
+    <button class="btn-secondary" id="kbCloseBtn" style="margin-top:12px;">Close</button>
+  </div>
+</div>
+
 <!-- Audio language picker -->
 <div class="modal-overlay" id="audModalOverlay">
   <div class="cc-modal">
@@ -195,6 +213,7 @@
 <div id="toast"></div>
 
 <script src="shared.js"></script>
+<script src="eq.js"></script>
 <script src="video.js"></script>
 </body>
 </html>

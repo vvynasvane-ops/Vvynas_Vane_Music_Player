@@ -32,18 +32,35 @@
    ========================================================================= */
 (() => {
 "use strict";
-const { idbGet, idbSet, fsApiSupported, verifyPermission, pickDirectory, getStoredHandle, walkDirectory } = window.VV;
+const { idbGet, idbSet, fsApiSupported, verifyPermission, pickDirectory, getStoredHandle, walkDirectory,
+        createVolumeController, volumeIconMarkup, renderShortcutList } = window.VV;
 
-const VIDEO_EXT = /\.(mp4|mkv|webm|mov|m4v|avi)$/i;
+// Deliberately broad, same reasoning as AUDIO_EXT in shared.js: recognize
+// every mainstream video container a person is likely to have on device,
+// not just the handful that are guaranteed to actually decode. Whether a
+// given file then *plays* still depends on the browser having a codec for
+// what's inside it — playId below already warns up front via canPlayType()
+// and explains per-error-code failures, so nothing gets silently skipped
+// during a folder scan just because its extension wasn't on a short list.
+const VIDEO_EXT = /\.(mp4|m4v|mkv|webm|mov|avi|ogv|ogm|ts|m2ts|mts|3gp|3g2|mpg|mpeg|mpe|wmv|flv|f4v|asf|vob|divx|rm|rmvb|qt)$/i;
 const M4A_EXT = /\.m4a$/i;
 const SUB_EXT = /\.(srt|vtt)$/i;
-const ALL_EXT = /\.(mp4|mkv|webm|mov|m4v|avi|m4a|srt|vtt)$/i;
+const ALL_EXT = /\.(mp4|m4v|mkv|webm|mov|avi|ogv|ogm|ts|m2ts|mts|3gp|3g2|mpg|mpeg|mpe|wmv|flv|f4v|asf|vob|divx|rm|rmvb|qt|m4a|srt|vtt)$/i;
 
 // Explicit MIME map — do not rely on File.type, which is frequently empty
 // or wrong for less common extensions (.mkv above all) depending on OS/browser.
+// Formats no mainstream browser decodes at all (WMV, FLV, RealMedia, VOB,
+// DivX-in-AVI) are still mapped to their correct type rather than left
+// blank — it won't make them playable, but it keeps the canPlayType()
+// warning and the per-error-code message below accurate instead of guessing.
 const MIME_BY_EXT = {
   mp4: "video/mp4", m4v: "video/x-m4v", webm: "video/webm", mkv: "video/x-matroska",
-  mov: "video/quicktime", avi: "video/x-msvideo", m4a: "audio/mp4",
+  mov: "video/quicktime", qt: "video/quicktime", avi: "video/x-msvideo",
+  ogv: "video/ogg", ogm: "video/ogg", ts: "video/mp2t", m2ts: "video/mp2t", mts: "video/mp2t",
+  "3gp": "video/3gpp", "3g2": "video/3gpp2", mpg: "video/mpeg", mpeg: "video/mpeg", mpe: "video/mpeg",
+  wmv: "video/x-ms-wmv", flv: "video/x-flv", f4v: "video/mp4", asf: "video/x-ms-asf",
+  vob: "video/dvd", divx: "video/divx", rm: "application/vnd.rn-realmedia", rmvb: "application/vnd.rn-realmedia-vbr",
+  m4a: "audio/mp4",
 };
 
 // Language codes recognized in subtitle filenames, e.g. "Movie.en.srt",
@@ -110,7 +127,20 @@ const els = {
   ccLoadFileRow: $("#ccLoadFileRow"), ccCloseBtn: $("#ccCloseBtn"), subtitleFileInput: $("#vpSubtitleFile"),
   audBtn: $("#audBtn"), audModalOverlay: $("#audModalOverlay"), audList: $("#audList"), audCloseBtn: $("#audCloseBtn"),
   toast: $("#toast"),
+  osd: $("#vpOsd"),
+  kbBtn: $("#kbBtn"), kbModalOverlay: $("#kbModalOverlay"), kbCloseBtn: $("#kbCloseBtn"),
+  eqBtn: $("#eqBtn"),
 };
+
+/* Equalizer — same panel and saved settings as the music player. "lazy" = the video element is only
+   routed through Web Audio once the EQ is actually engaged (from a tap), so people who never touch it
+   get the browser's untouched native playback. */
+if (window.VaneEQ && els.video && els.eqBtn) {
+  window.VaneEQ.attach(els.video, { lazy: true }).then(() => {
+    window.VaneEQ.subscribe((snap) => { els.eqBtn.classList.toggle("eq-on", snap.engaged); els.eqBtn.title = snap.engaged ? "Equalizer — on" : "Equalizer"; });
+  });
+  els.eqBtn.addEventListener("click", () => window.VaneEQ.toggle(els.eqBtn));
+}
 
 function toast(msg) { els.toast.textContent = msg; els.toast.classList.add("show"); clearTimeout(toast._t); toast._t = setTimeout(() => els.toast.classList.remove("show"), 2400); }
 function fmtTime(sec) { if (!isFinite(sec) || sec < 0) sec = 0; const m = Math.floor(sec / 60), s = Math.floor(sec % 60); return `${m}:${String(s).padStart(2, "0")}`; }
@@ -119,10 +149,25 @@ function extOf(name) { return (name.split(".").pop() || "").toLowerCase(); }
 function baseName(name) { return name.replace(/\.[^./]+$/, "").toLowerCase(); }
 
 els.backBtn.addEventListener("click", () => { window.location.href = "index.html"; });
-els.fullscreenBtn.addEventListener("click", () => {
-  if (els.video.requestFullscreen) els.video.requestFullscreen().catch(() => toast("Fullscreen not available."));
+/* Fullscreen targets the whole stage (not the bare <video>) so the on-screen
+   display for volume / seek keeps showing, and the keyboard shortcuts keep
+   working, while fullscreen. iPhone Safari only supports video-element
+   fullscreen (with its own native controls), so it falls back to that. */
+function isFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+function toggleFullscreen() {
+  if (!els.video.src) { toast("Pick a video first."); return; }
+  if (isFullscreen()) {
+    const exit = document.exitFullscreen || document.webkitExitFullscreen;
+    if (exit) exit.call(document);
+    return;
+  }
+  const stage = els.vpStage;
+  const req = stage.requestFullscreen || stage.webkitRequestFullscreen;
+  if (req) { const r = req.call(stage); if (r && r.catch) r.catch(() => toast("Fullscreen not available.")); }
+  else if (els.video.webkitEnterFullscreen) els.video.webkitEnterFullscreen();
   else toast("Fullscreen not supported in this browser.");
-});
+}
+els.fullscreenBtn.addEventListener("click", toggleFullscreen);
 
 /* ---------------------------------------------------------------------
    Folder access / scanning
@@ -267,6 +312,7 @@ async function playId(id) {
   }
 
   els.video.src = state.objectUrl;
+  resetBufferedUI(); // otherwise the new file starts with the PREVIOUS one's loaded-so-far band still showing
   els.video.load();
   els.video.play().catch(() => {});
   els.title.textContent = item.name;
@@ -362,8 +408,49 @@ els.video.addEventListener("timeupdate", () => {
   els.seek.value = (els.video.currentTime / els.video.duration) * 100;
   els.cur.textContent = fmtTime(els.video.currentTime);
   els.total.textContent = fmtTime(els.video.duration);
+  updateSeekBuffered(); // cheap enough per tick, and keeps the buffered band live even on browsers that fire "progress" only sparsely
 });
 els.seek.addEventListener("input", () => { if (els.video.duration) els.video.currentTime = (els.seek.value / 100) * els.video.duration; });
+
+/* ---------------------------------------------------------------------
+   Buffered/loading indicator — same idea as the music player's
+   .seek-buffered (see app.js), adapted for this page's native
+   <input type=range> scrubber: two CSS custom properties, --play-pct
+   and --buf-pct, drive the .vp-seek gradient in style.css, so one bar
+   shows both how far playback has reached (solid --accent) AND how
+   much of the file has actually finished loading (softer --accent-dim)
+   at once, instead of the old flat "it's all here" assumption.
+   --------------------------------------------------------------------- */
+/** Reads els.video.buffered (a list of disjoint loaded time ranges — a
+ *  seek can leave a gap between what was already loaded and what's
+ *  loading now) and pushes both the playback and buffered percentages
+ *  onto the scrub bar's CSS variables. Also toggles .fully-loaded for a
+ *  small settle-glow once the whole file has actually finished loading. */
+function updateSeekBuffered() {
+  if (!els.video.duration || !isFinite(els.video.duration)) return;
+  const playPct = (els.video.currentTime / els.video.duration) * 100;
+  const ranges = els.video.buffered;
+  let end = 0;
+  for (let i = 0; i < ranges.length; i++) {
+    if (els.video.currentTime >= ranges.start(i) && els.video.currentTime <= ranges.end(i)) { end = ranges.end(i); break; }
+    end = Math.max(end, ranges.end(i));
+  }
+  const bufPct = Math.min(100, (end / els.video.duration) * 100);
+  els.seek.style.setProperty("--play-pct", playPct + "%");
+  els.seek.style.setProperty("--buf-pct", Math.max(playPct, bufPct) + "%"); // never let rounding show the loaded band trailing behind the playhead
+  els.seek.classList.toggle("fully-loaded", bufPct >= 99.9);
+}
+/** Called right after a new src is assigned, so the scrubber doesn't
+ *  keep showing the PREVIOUS file's loaded-so-far band for the instant
+ *  before the new file's first progress/loadedmetadata event corrects it. */
+function resetBufferedUI() {
+  els.seek.style.setProperty("--play-pct", "0%");
+  els.seek.style.setProperty("--buf-pct", "0%");
+  els.seek.classList.remove("fully-loaded");
+}
+els.video.addEventListener("progress", updateSeekBuffered);
+els.video.addEventListener("loadedmetadata", updateSeekBuffered);
+els.video.addEventListener("canplaythrough", updateSeekBuffered); // browsers that report one late "fully buffered" range rather than incremental ticks still land on an accurate final state
 
 [els.videoList, els.m4aList].forEach(list => list.addEventListener("click", (e) => {
   const row = e.target.closest(".vp-row");
@@ -509,13 +596,110 @@ els.subtitleFileInput.addEventListener("change", async (e) => {
 });
 
 /* ---------------------------------------------------------------------
-   Keyboard shortcuts — "V" cycles subtitle language tracks (Off → each
-   detected language → Off), matching the same convention VLC uses.
+   Volume control — one controller drives the slider, the mute button and
+   the keyboard shortcuts. Remembered between visits (not the mute flag),
+   separately from the music player's volume.
    --------------------------------------------------------------------- */
+const volume = createVolumeController(els.video, { storageKey: "volume-video", step: 5 });
+const volUI = { slider: $("#vpVolSlider"), button: $("#vpMuteBtn"), icon: $("#vpVolIcon"), value: $("#vpVolValue"), row: $("#vpVolumeRow") };
+volume.subscribe((v) => {
+  volUI.slider.value = v.level;
+  volUI.slider.style.setProperty("--vol-pct", v.level + "%");
+  volUI.slider.setAttribute("aria-valuetext", v.muted ? "Muted" : v.volume + " percent");
+  volUI.icon.innerHTML = volumeIconMarkup(v.level);
+  volUI.button.classList.toggle("muted", v.level === 0);
+  volUI.value.textContent = v.muted ? "Muted" : v.volume + "%";
+  volUI.row.classList.toggle("no-volume-slider", !v.supported);
+});
+volUI.slider.addEventListener("input", () => volume.set(Number(volUI.slider.value)));
+volUI.button.addEventListener("click", () => volume.toggleMute());
+
+/** Small on-screen display inside the stage — visible in fullscreen too,
+ *  where the page's toast and sliders are not. */
+function showOsd(text, barPct) {
+  els.osd.innerHTML = `<span>${text}</span>` + (barPct == null ? "" : `<span class="osd-bar"><i style="width:${barPct}%"></i></span>`);
+  els.osd.classList.add("show");
+  clearTimeout(showOsd._t);
+  showOsd._t = setTimeout(() => els.osd.classList.remove("show"), 1100);
+}
+function showVolumeOsd() {
+  const v = volume.state;
+  showOsd(v.level === 0 ? (v.muted ? "🔇 Muted" : "🔇 Volume 0%") : `🔊 Volume ${v.volume}%`, v.level);
+}
+
+/* ---------------------------------------------------------------------
+   Keyboard shortcuts — this map is what the ⌨ Shortcuts panel shows
+   (catalog: SHORTCUTS.video in shared.js). Keep the two in sync.
+     Space          play / pause          M   mute / unmute
+     Shift + ↑ / ↓  volume ±5%            F   fullscreen on / off
+     ← / →          seek ∓5s              V   cycle subtitle language
+     Shift + ← / →  previous / next video
+   Plain arrows are not used for volume because they scroll the file list.
+   --------------------------------------------------------------------- */
+function isTypingTarget(t) {
+  if (!(t instanceof window.Element)) return false;
+  if (t.isContentEditable || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return true;
+  if (t.tagName !== "INPUT") return false;
+  return !["range", "checkbox", "radio", "button", "submit", "reset", "color", "file"].includes((t.type || "").toLowerCase());
+}
+function closeShortcutsPanel() { els.kbModalOverlay.classList.remove("open"); }
+els.kbBtn.addEventListener("click", () => els.kbModalOverlay.classList.add("open"));
+els.kbCloseBtn.addEventListener("click", closeShortcutsPanel);
+els.kbModalOverlay.addEventListener("click", (e) => { if (e.target === els.kbModalOverlay) closeShortcutsPanel(); });
+renderShortcutList($("#shortcutList"), "video", $("#shortcutNote"));
+
 window.addEventListener("keydown", (e) => {
-  const tag = (e.target && e.target.tagName) || "";
-  if (tag === "INPUT" || tag === "TEXTAREA") return;
-  if (e.key === "v" || e.key === "V") { e.preventDefault(); cycleSubtitleTrack(); }
+  if (e.key === "Escape" && els.kbModalOverlay.classList.contains("open")) { closeShortcutsPanel(); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return; // never steal browser/OS combos
+  const t = e.target;
+  if (isTypingTarget(t)) return;
+  const key = e.key;
+  const isRange = t instanceof window.Element && t.tagName === "INPUT" && t.type === "range";
+  const isVolSlider = isRange && t.classList.contains("vol-slider");
+  const hasMedia = !!els.video.src;
+
+  // Space — the app-wide play/pause toggle, unconditionally, same as the
+  // music player: it works no matter what's focused (a button, a link, a
+  // row) or what state the page is in. isTypingTarget above is the only
+  // carve-out. togglePlay() already no-ops safely if nothing's loaded
+  // yet, so this doesn't need its own "no media" guard either — Space
+  // just does nothing rather than sometimes toggling, sometimes scrolling.
+  if (e.code === "Space") {
+    if (e.repeat) return;
+    e.preventDefault(); togglePlay();
+    return;
+  }
+
+  if (key === "ArrowUp" || key === "ArrowDown" || key === "ArrowLeft" || key === "ArrowRight") {
+    if (isRange && !(isVolSlider && e.shiftKey && (key === "ArrowUp" || key === "ArrowDown"))) return; // sliders keep their own arrow keys
+    if (els.kbModalOverlay.classList.contains("open")) return;
+    if (e.shiftKey && (key === "ArrowUp" || key === "ArrowDown")) {
+      e.preventDefault();
+      if (!volume.supported) { toast("Volume is controlled by your device's buttons in this browser."); return; }
+      volume.nudge(key === "ArrowUp" ? 1 : -1);
+      showVolumeOsd();
+    } else if (e.shiftKey && key === "ArrowRight") { if (!e.repeat) { e.preventDefault(); next(); } }
+    else if (e.shiftKey && key === "ArrowLeft") { if (!e.repeat) { e.preventDefault(); prev(); } }
+    else if (!e.shiftKey) {
+      if (!hasMedia || !isFinite(els.video.duration)) return;
+      e.preventDefault();
+      const d = key === "ArrowRight" ? 5 : -5;
+      els.video.currentTime = Math.max(0, Math.min(els.video.duration, els.video.currentTime + d));
+      showOsd(`${d > 0 ? "⏩ +5s" : "⏪ −5s"} · ${fmtTime(els.video.currentTime)}`);
+    }
+    return;
+  }
+
+  if (e.shiftKey || e.repeat) return;
+  // Arrow keys already back off while the Shortcuts panel is open (above);
+  // the letter shortcuts need the same guard so "f"/"v"/"m"/"e" can't fire
+  // on the player underneath while that panel is the thing on screen.
+  if (els.kbModalOverlay.classList.contains("open")) return;
+  const k = key.toLowerCase();
+  if (k === "m") { e.preventDefault(); volume.toggleMute(); showVolumeOsd(); }
+  else if (k === "f") { e.preventDefault(); toggleFullscreen(); }
+  else if (k === "v") { e.preventDefault(); cycleSubtitleTrack(); }
+  else if (k === "e") { e.preventDefault(); window.VaneEQ && window.VaneEQ.toggle(els.eqBtn); }
 });
 
 /* ---------------------------------------------------------------------
@@ -548,6 +732,7 @@ async function applyStoredAccentColors() {
    Boot
    --------------------------------------------------------------------- */
 async function boot() {
+  volume.load();
   await applyStoredAccentColors();
   const handle = await getStoredHandle();
   if (handle) {
@@ -559,6 +744,7 @@ async function boot() {
       if (ok) { state.usingFSApi = true; await scanHandle(handle); }
       else toast("Access wasn't granted.");
     };
+    window.VV.watchForSilentReconnect(handle, async () => { state.usingFSApi = true; await scanHandle(handle); });
   }
 }
 boot();

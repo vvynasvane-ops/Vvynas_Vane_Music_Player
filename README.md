@@ -70,6 +70,38 @@ python3 -m http.server 8080
 - **Monthly & yearly recap**, **video player** with subtitles/multi-
   language audio, and **DJ Mode** — see the sections below.
 
+## Volume control & keyboard shortcuts
+
+**Volume** works in both players — the music player (mini-player + full
+player sliders, mute buttons) and the video player (slider + mute button
+under the seek bar). Each remembers its own level between visits; mute is
+never remembered, so the app doesn't open silent by surprise. iPhone/iPad
+Safari doesn't let web pages set volume (the hardware buttons own it), so
+there the slider hides itself and only the mute button is shown.
+
+**Ten shortcuts per player**, listed in the app itself — music player:
+Settings → ⌨ Keyboard Shortcuts; video player: the ⌨ button in the top bar.
+
+| Key | Music player | Video player |
+| --- | --- | --- |
+| `Space` | Play / pause | Play / pause |
+| `Shift` + `↑` / `↓` | Volume ±5% | Volume ±5% |
+| `M` | Mute / unmute | Mute / unmute |
+| `←` / `→` | Rewind / forward 5s | Rewind / forward 5s |
+| `Shift` + `←` / `→` | Previous / next song | Previous / next video |
+| `S` | Shuffle on / off | — |
+| `R` | Repeat off → all → one | — |
+| `F` | — | Fullscreen on / off |
+| `V` | — | Cycle subtitle language |
+
+Notes: shortcuts pause while typing in a field, and never fire with
+Ctrl/Cmd/Alt held (so browser combos like Ctrl+R still work). Plain `↑`/`↓`
+are intentionally left alone because they scroll the song/file lists.
+Fullscreen in the video player now fullscreens the whole stage rather than
+the bare `<video>`, so the volume/seek on-screen display and the shortcuts
+keep working while fullscreen. The shortcut catalog lives in `shared.js`
+(`SHORTCUTS`) — update it whenever a handler in `app.js` / `video.js` changes.
+
 ## Rage Mode (Settings → 🔥 Rage Mode)
 
 An alternate, **opt-in** full-app skin built from your concert-atmosphere
@@ -160,3 +192,18 @@ an automatic English preference and an AUD picker.
 The lyrics view and automatic ID3-embedded album art extraction aren't
 in this pass — songs still default to generated art unless you manually
 upload a photo per-song (see "Custom album art per song" above).
+
+## Song options (⋮) — reliability notes
+
+The ⋮ menu on every song row (Library, Favorites, Recently Played, Folders,
+Playlists) is built to work wherever the row sits in the list — top, middle
+or bottom — at every screen size:
+
+- Closed sheets are inert (`pointer-events: none; visibility: hidden`), so an
+  invisible sheet can never cover a row's ⋮ button on tablet/desktop widths.
+- Decorative full-screen overlays (the page-turn animation) never capture taps.
+- Lists are patched in place by song id instead of rebuilt, so a tap is never
+  lost to a background re-render (e.g. while a big library's details load).
+- `scroll-padding-bottom` keeps keyboard-focused rows clear of the mini player.
+- "Play Next" on the current song is a no-op; the Add-to-Playlist target is
+  cleared whenever its dialog closes; song ids are collision-proof.

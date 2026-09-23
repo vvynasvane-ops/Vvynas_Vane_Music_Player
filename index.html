@@ -145,6 +145,14 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 17V3m0 14l-4-4m4 4l4-4M5 21h14"/></svg>
           Add to Home Screen
         </button>
+        <button class="sidebar-btn" id="eqSidebarBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
+          Equalizer
+        </button>
+        <button class="sidebar-btn" id="lyricsSidebarBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H8l-5 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><path d="M8 8h8M8 12h5"/></svg>
+          Lyrics
+        </button>
         <button class="sidebar-btn" id="settingsBtn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.9-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1-1.6 1.7 1.7 0 00-1.9.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.9 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1 1.7 1.7 0 00-.3-1.9l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.9.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.9-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.9V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>
           Themes &amp; Settings
@@ -201,11 +209,15 @@
 
   <!-- ============ MINI PLAYER ============ -->
   <div class="mini-player with-sidebar hidden" id="miniPlayer">
-    <div class="mini-progress"><div class="mini-progress-fill" id="miniProgressFill"></div></div>
+    <div class="mini-progress"><div class="mini-progress-buffered" id="miniProgressBuffered"></div><div class="mini-progress-fill" id="miniProgressFill"></div></div>
     <div class="art" id="miniArt" style="width:46px;height:46px;border-radius:8px;"></div>
     <div class="meta">
       <div class="title" id="miniTitle">—</div>
       <div class="sub" id="miniArtist">—</div>
+    </div>
+    <div class="mini-volume" id="miniVolume">
+      <button class="vol-mute-btn" id="miniMuteBtn" title="Mute / Unmute (M)" aria-label="Mute / Unmute"><svg viewBox="0 0 24 24" id="miniVolIcon"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 010 7M19 5a10 10 0 010 14"/></svg></button>
+      <input type="range" class="vol-slider" id="miniVolSlider" min="0" max="100" step="1" value="100" aria-label="Volume" title="Volume (Shift + ↑ / ↓)">
     </div>
     <div class="controls">
       <button id="miniPrevBtn" title="Previous"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l10-6v12z"/></svg></button>
@@ -263,6 +275,7 @@
 
       <div class="player-seek">
         <div class="seek-track" id="seekTrack">
+          <div class="seek-buffered" id="seekBuffered" title="How much of the file has finished loading"></div>
           <div class="seek-fill" id="seekFill"></div>
           <div class="seek-handle" id="seekHandle" style="left:0%"></div>
         </div>
@@ -277,12 +290,114 @@
         <button class="pc-toggle" id="repeatBtn" title="Repeat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 2l4 4-4 4M3 11V9a4 4 0 014-4h14M7 22l-4-4 4-4M21 13v2a4 4 0 01-4 4H3"/></svg></button>
       </div>
 
+      <div class="player-volume" id="playerVolume">
+        <button class="vol-mute-btn" id="muteBtn" title="Mute / Unmute (M)" aria-label="Mute / Unmute"><svg viewBox="0 0 24 24" id="volIcon"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 010 7M19 5a10 10 0 010 14"/></svg></button>
+        <input type="range" class="vol-slider" id="volSlider" min="0" max="100" step="1" value="100" aria-label="Volume" title="Volume (Shift + ↑ / ↓)">
+        <span class="vol-value" id="volValue">100%</span>
+      </div>
+
       <div class="player-bottom-row">
         <button id="favBtn" title="Favorite"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 000-7.8z"/></svg></button>
         <button id="addToPlaylistBtn" title="Add to playlist"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13M9 8l12-2M9 18a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M21 12v6m3-3h-6" stroke-width="1.8"/></svg></button>
         <button id="queueBtn" title="Up next"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h9M4 12h9M4 18h9M17 6v12m0 0l-3-3m3 3l3-3"/></svg></button>
+        <button id="lyricsBtn" title="Lyrics (L)" aria-label="Lyrics"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H8l-5 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><path d="M8 8h8M8 12h5"/></svg></button>
+        <button id="eqBtn" title="Equalizer (E)" aria-label="Equalizer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></button>
       </div>
     </div>
+  </div>
+
+  <!-- ============ LYRICS VIEW ============
+       Full-screen, above the player. Synced (LRC) lyrics follow the song;
+       plain lyrics scroll. Logic lives in lyrics.js. -->
+  <div class="lyrics-overlay" id="lyricsOverlay" role="dialog" aria-label="Lyrics" aria-hidden="true">
+    <div class="ly-backdrop" id="lyBackdrop"></div>
+    <div class="ly-shade"></div>
+    <header class="ly-top">
+      <button class="ly-icon" id="lyCloseBtn" aria-label="Close lyrics"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 9l-7 7-7-7"/></svg></button>
+      <div class="ly-heading">
+        <div class="ly-title" id="lyTitle">Lyrics</div>
+        <div class="ly-artist" id="lyArtist"></div>
+      </div>
+      <button class="ly-icon" id="lyMenuBtn" aria-label="Lyrics options" aria-haspopup="true" aria-expanded="false"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg></button>
+    </header>
+    <div class="ly-badge-row"><span class="ly-badge" id="lyBadge">No lyrics</span></div>
+
+    <div class="ly-stage">
+      <div class="ly-scroll" id="lyScroll" tabindex="0" aria-label="Lyrics">
+        <div class="ly-lines hidden" id="lyLines"></div>
+      </div>
+      <button class="ly-jump hidden" id="lyJump">↓ Follow along</button>
+
+      <div class="ly-empty hidden" id="lyEmpty">
+        <div class="ly-empty-icon">♪</div>
+        <div class="ly-empty-title" id="lyEmptyTitle">No lyrics for this song yet</div>
+        <div class="ly-empty-msg" id="lyEmptyMsg"></div>
+        <div class="ly-empty-btns" id="lyEmptyBtns">
+          <button class="btn-primary" id="lyEmptySearch">Search online</button>
+          <button class="btn-secondary" id="lyEmptyPaste">Paste or type lyrics</button>
+          <button class="btn-secondary" id="lyEmptyImport">Import .lrc / .txt</button>
+        </div>
+        <div class="ly-empty-tip">Tip: keep a file named like the song (<b>Song.lrc</b>) in the same folder and it's picked up automatically.</div>
+      </div>
+      <div class="ly-loading hidden" id="lyLoading"><div class="ly-spinner" aria-hidden="true"></div><div id="lyLoadingMsg">Looking for lyrics…</div></div>
+
+      <!-- options menu -->
+      <div class="ly-menu hidden" id="lyMenu" role="menu">
+        <button role="menuitem" data-act="search">🔎 <span>Search online <em>lrclib.net</em></span></button>
+        <button role="menuitem" data-act="another" class="hidden">🔁 <span>Try another match</span></button>
+        <button role="menuitem" data-act="edit">✏️ <span>Paste / edit lyrics</span></button>
+        <button role="menuitem" data-act="import">📂 <span>Import .lrc / .txt file</span></button>
+        <button role="menuitem" data-act="card">🖼 <span>Make a lyric card</span></button>
+        <button role="menuitem" data-act="copy">📋 <span>Copy lyrics</span></button>
+        <div class="ly-menu-row ly-shift-row"><span>⏱ Timing</span>
+          <span class="ly-stepper"><button data-act="shift-" aria-label="Lyrics earlier">−</button><b class="ly-shift-val">0.0s</b><button data-act="shift+" aria-label="Lyrics later">+</button></span></div>
+        <div class="ly-menu-row"><span>🔤 Text size</span>
+          <span class="ly-stepper"><button data-act="size-" aria-label="Smaller text">A−</button><b class="ly-size-val">100%</b><button data-act="size+" aria-label="Larger text">A+</button></span></div>
+        <button role="menuitemcheckbox" aria-checked="false" data-act="tele" class="ly-check">🧭 <span>Scroll unsynced lyrics with the song</span><i></i></button>
+        <button role="menuitemcheckbox" aria-checked="false" data-act="auto" class="ly-check">🌐 <span>Search online when lyrics are missing</span><i></i></button>
+        <button role="menuitem" data-act="remove" class="danger hidden">🗑 <span>Remove my saved lyrics</span></button>
+      </div>
+
+      <!-- editor -->
+      <div class="ly-editor hidden" id="lyEditor">
+        <div class="ly-editor-card">
+          <h3>Your lyrics</h3>
+          <textarea id="lyEditText" spellcheck="false" placeholder="Paste lyrics here.&#10;Timed lines like [01:23.45] the words… make them follow along."></textarea>
+          <div class="ly-editor-actions">
+            <button class="btn-secondary" id="lyEditImport">Import file…</button>
+            <button class="btn-secondary" id="lyEditClear">Clear</button>
+            <span class="grow"></span>
+            <button class="btn-secondary" id="lyEditCancel">Cancel</button>
+            <button class="btn-primary" id="lyEditSave">Save</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- online-lookup consent -->
+      <div class="ly-dialog hidden" id="lyDialog" role="alertdialog" aria-label="Search online for lyrics">
+        <div class="ly-dialog-card">
+          <h3>Search lrclib.net?</h3>
+          <p>Everything here stays on your device — unless you say yes. To find lyrics, the song's <b>title, artist and length</b> are sent to <b>lrclib.net</b>, a free, open lyrics database. Nothing else is shared, and matches are saved here so they work offline afterwards.</p>
+          <div class="ly-dialog-actions">
+            <button class="btn-primary" id="lyDialogOnce">Search this once</button>
+            <button class="btn-secondary" id="lyDialogAlways">Always allow when lyrics are missing</button>
+            <button class="btn-secondary" id="lyDialogNo">Not now</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="ly-bottom">
+      <div class="ly-seekrow"><span id="lyCur">0:00</span>
+        <div class="seek-track ly-seek" id="lySeek"><div class="seek-fill" id="lySeekFill" style="width:0%"></div></div>
+        <span id="lyTotal">0:00</span></div>
+      <div class="ly-transport">
+        <button id="lyPrev" aria-label="Previous"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l10-6v12z"/></svg></button>
+        <button id="lyPlay" class="ly-play" aria-label="Play"><svg class="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg><svg class="i-pause" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg></button>
+        <button id="lyNext" aria-label="Next"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM4.5 6l10 6-10 6z"/></svg></button>
+      </div>
+    </footer>
+    <input type="file" id="lyFileInput" accept=".lrc,.txt,text/plain" style="display:none;">
   </div>
 
   <!-- ============ UP NEXT SHEET ============ -->
@@ -291,6 +406,26 @@
     <div class="sheet-handle"></div>
     <div class="sheet-head"><h2>Up Next</h2><button class="icon-btn" id="closeQueueBtn">✕</button></div>
     <div class="sheet-body" id="queueList"></div>
+  </div>
+
+  <!-- ============ SONG ACTIONS SHEET ============
+       Opened from the single ⋮ kebab on each row. Full-width, generously
+       tall tappable rows on purpose — this replaced three cramped icon
+       buttons that were easy to miss and land on the row (which plays)
+       instead. One bigger, isolated target per row + a proper menu for
+       the actions is the same pattern Spotify/Apple Music/YouTube Music
+       use for this exact situation. -->
+  <div class="sheet-overlay" id="rowActionsSheetOverlay"></div>
+  <div class="sheet" id="rowActionsSheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-head">
+      <div class="row-actions-sheet-title">
+        <div class="t" id="rowActionsSongTitle"></div>
+        <div class="s" id="rowActionsSongArtist"></div>
+      </div>
+      <button class="icon-btn" id="closeRowActionsBtn">✕</button>
+    </div>
+    <div class="sheet-body" id="rowActionsList"></div>
   </div>
 
   <!-- ============ ADD TO PLAYLIST MODAL ============ -->
@@ -361,6 +496,9 @@
       <div class="section-label" style="margin-top:16px;">Album Art Style</div>
       <div class="art-style-grid" id="artStyleGrid"></div>
 
+      <div class="section-label" style="margin-top:16px;">🖱 Cursor</div>
+      <div class="art-style-grid" id="cursorGrid"></div>
+
       <div class="section-label" style="margin-top:16px;">Font (8 styles)</div>
       <div class="font-grid" id="fontGrid"></div>
 
@@ -387,9 +525,17 @@
         <span class="overlay-strength-value" id="songListOverlayValue">40%</span>
       </div>
 
+      <div class="section-label" style="margin-top:16px;">⌨ Keyboard Shortcuts</div>
+      <div class="shortcut-list" id="shortcutList"></div>
+      <div class="shortcut-note" id="shortcutNote"></div>
+
       <div class="modal-actions">
         <button class="btn-secondary" id="closeSettingsBtn">Close</button>
         <button class="btn-primary" id="settingsRescanBtn">Change Folder</button>
+      </div>
+      <div class="modal-actions" style="margin-top:8px;">
+        <button class="btn-secondary" id="settingsEqBtn" type="button" style="margin-top:0;">🎚 Equalizer</button>
+        <button class="btn-secondary" id="settingsLyricsBtn" type="button" style="margin-top:0;">💬 Lyrics</button>
       </div>
       <div class="modal-actions" style="margin-top:8px;">
         <a href="video.html" class="btn-secondary" style="margin-top:0;text-decoration:none;text-align:center;">Video Player</a>
@@ -451,6 +597,8 @@
 <input type="file" id="folderFallbackInput" webkitdirectory multiple accept="audio/*,.mp3,.mp2,.m4a,.m4b,.m4p,.m4r,.aac,.wav,.wave,.flac,.ogg,.oga,.ogx,.opus,.weba,.webm,.wma,.aiff,.aif,.aifc,.amr,.mka,.caf,.3gp,.3g2,.3ga,.spx,.ape,.mpc,.tta,.wv,.au,.snd,.mid,.midi" class="hidden">
 
 <script src="shared.js"></script>
+<script src="eq.js"></script>
+<script src="lyrics.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

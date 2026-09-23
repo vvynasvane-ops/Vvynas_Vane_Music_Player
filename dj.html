@@ -27,13 +27,85 @@
 <link rel="stylesheet" href="style.css">
 <style>
   body { overflow-y: auto; overflow-x: hidden; background: #000000; font-family: 'Courier New', ui-monospace, monospace; }
-  #djVisualizer { position: fixed; inset: 0; z-index: 0; }
+
+  /* --- Scrolling, made visible & easy everywhere -----------------------
+     The native scrollbar was the default overlay style: invisible until
+     mid-drag on desktop, and on touch devices (iOS/Android) it's basically
+     never grabbable at all — that's why it felt "rarely visible." Two
+     fixes, layered so every platform gets one that actually works for it:
+     1) A persistent, on-brand scrollbar for browsers that support styling
+        one (desktop Chrome/Edge/Safari + Firefox) instead of a thin grey
+        overlay that fades away.
+     2) A floating scroll-to-top control (below, near the closing tags)
+        for every platform, mobile included, where scrollbar styling is
+        ignored outright — always visible once you've scrolled, one tap
+        back to the top, with a ring that fills to show how far down you
+        are. */
+  * { scrollbar-width: thin; scrollbar-color: #7B2FFF rgba(255,255,255,.06); }
+  ::-webkit-scrollbar { width: 11px; height: 11px; }
+  ::-webkit-scrollbar-track { background: rgba(255,255,255,.05); border-radius: 10px; }
+  ::-webkit-scrollbar-thumb { background: linear-gradient(180deg, #00FFD4, #7B2FFF); border-radius: 10px; border: 2.5px solid #0a0a12; background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #4dffe4, #9153ff); background-clip: padding-box; }
+
+  .dj-scrolltop {
+    position: fixed; right: calc(16px + env(safe-area-inset-right,0px)); bottom: calc(20px + env(safe-area-inset-bottom,0px));
+    width: 52px; height: 52px; border-radius: 50%; padding: 0; cursor: grab;
+    /* Iron-and-wax-seal badge: a struck bronze medallion instead of a flat
+       glass chip — hammered radial shading, a beveled gold rim, deep
+       shadow like it's set slightly into the page. */
+    background: radial-gradient(circle at 35% 28%, #3a2f22, #14100a 72%);
+    border: 2px solid #8a6a3a;
+    display: flex; align-items: center; justify-content: center; color: #fff; z-index: 6;
+    box-shadow: 0 6px 20px rgba(0,0,0,.6), 0 0 0 1px rgba(0,0,0,.5), inset 0 1px 1px rgba(255,214,140,.35), inset 0 -3px 5px rgba(0,0,0,.6);
+    opacity: 0; transform: translateY(16px) scale(.8); pointer-events: none;
+    transition: opacity .25s ease, transform .3s cubic-bezier(.3,1.5,.4,1), box-shadow .2s ease;
+  }
+  .dj-scrolltop.show { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+  .dj-scrolltop:hover { box-shadow: 0 6px 22px rgba(0,0,0,.6), 0 0 0 1px rgba(0,0,0,.5), inset 0 1px 1px rgba(255,214,140,.5), inset 0 -3px 5px rgba(0,0,0,.6), 0 0 14px rgba(232,196,104,.35); }
+  .dj-scrolltop:active { transform: scale(.9); cursor: grabbing; }
+  .dj-scrolltop-ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+  .dj-scrolltop-track { fill: none; stroke: rgba(255,255,255,.14); stroke-width: 3; }
+  .dj-scrolltop-fill { fill: none; stroke: url(#djScrollGrad); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 119.4; stroke-dashoffset: 119.4; }
+  .dj-scrolltop-arrow { width: 19px; height: 19px; animation: djArrowRise 1.7s ease-in-out infinite; transform-origin: 50% 90%; }
+  /* A small rise-and-settle instead of a plain float, so the arrow still
+     reads as reaching upward toward the top of the page. */
+  @keyframes djArrowRise { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+  @media (max-width: 400px) { .dj-scrolltop { width: 46px; height: 46px; right: calc(12px + env(safe-area-inset-right,0px)); bottom: calc(16px + env(safe-area-inset-bottom,0px)); } }
+
+  /* Same marker, scaled down, for panels that scroll independently of the
+     page — the Battle Queue list and each modal sheet (song picker,
+     settings, about). Mounted by JS in a stable wrapper so it survives
+     the panel's own content being re-rendered. */
+  .dj-mini-scrolltop {
+    position: absolute; right: 8px; bottom: 8px; width: 30px; height: 30px; border-radius: 50%; padding: 0; cursor: grab;
+    background: radial-gradient(circle at 35% 28%, #3a2f22, #14100a 72%);
+    border: 1.5px solid #8a6a3a;
+    display: flex; align-items: center; justify-content: center; z-index: 3;
+    box-shadow: 0 3px 10px rgba(0,0,0,.55), inset 0 1px 1px rgba(255,214,140,.3), inset 0 -2px 3px rgba(0,0,0,.6);
+    opacity: 0; transform: scale(.7); pointer-events: none;
+    transition: opacity .2s ease, transform .25s cubic-bezier(.3,1.5,.4,1);
+  }
+  .dj-mini-scrolltop.show { opacity: 1; transform: scale(1); pointer-events: auto; }
+  .dj-mini-scrolltop:active { transform: scale(.88); cursor: grabbing; }
+  .dj-mini-scrolltop--modal { bottom: 62px; } /* clears the sticky CLOSE footer */
+  .dj-mini-scrolltop-ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+  .dj-mini-scrolltop-track { fill: none; stroke: rgba(255,255,255,.16); stroke-width: 2.4; }
+  .dj-mini-scrolltop-fill { fill: none; stroke: url(#djScrollGrad); stroke-width: 2.4; stroke-linecap: round; }
+  .dj-mini-scrolltop-arrow { width: 13px; height: 13px; animation: djArrowRise 1.7s ease-in-out infinite; transform-origin: 50% 90%; }
+  /* <canvas> is a replaced element (like <img>) — position:fixed;inset:0
+     alone doesn't stretch it to the viewport the way it would a <div>; it
+     was quietly rendering at its intrinsic default size (300×150) pinned
+     to the top-left corner instead of covering the screen. Explicit
+     width/height forces it full-bleed, and canvas.clientWidth/clientHeight
+     (used by Visualizer.resize()) then report the real viewport size. */
+  #djVisualizer { position: fixed; inset: 0; z-index: 0; width: 100%; height: 100%; display: block; }
   #djScrim { position: fixed; inset: 0; z-index: 1; pointer-events: none; background: linear-gradient(180deg, rgba(2,4,8,.4) 0%, rgba(2,4,8,.12) 30%, rgba(2,4,8,.12) 70%, rgba(2,4,8,.45) 100%); }
   #djWrap { position: relative; z-index: 2; max-width: 720px; margin: 0 auto; padding: calc(14px + env(safe-area-inset-top,0px)) 14px calc(60px + env(safe-area-inset-bottom,0px)); }
 
   .dj-topbar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
   .dj-icon-btn { width: 38px; height: 38px; border-radius: 50%; border: 1px solid rgba(255,255,255,.18); display: flex; align-items: center; justify-content: center; color: #fff; text-decoration: none; flex: none; background: rgba(0,0,0,.3); }
   .dj-icon-btn svg { width: 17px; height: 17px; }
+  .dj-icon-btn.eq-on { color: #E8C468; border-color: #8A6E2A; background: rgba(232,196,104,.14); box-shadow: 0 0 10px rgba(232,196,104,.25); }
   .dj-title-block { flex: 1; min-width: 0; }
   .dj-title-block h1 { font-size: 15px; letter-spacing: .1em; margin: 0; color: #00FFD4; text-shadow: 0 0 12px rgba(0,255,212,.5); }
   .dj-status { font-size: 10.5px; color: #8ab; letter-spacing: .06em; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -47,8 +119,13 @@
      so every label gets a soft shadow rather than a flat opaque panel. */
   .dj-card, .dj-topbar, .queue-row, #shoutoutText { text-shadow: 0 1px 4px rgba(0,0,0,.7); }
   .deck-meta .t, .deck-meta .a, .dj-status, .mixer-labels, .bass-label-row span, .deck-label { text-shadow: 0 1px 4px rgba(0,0,0,.8); }
-  .dj-decks { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  @media (max-width: 520px) { .dj-decks { grid-template-columns: 1fr; } }
+  .dj-decks { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+  @media (max-width: 520px) { .dj-decks { grid-template-columns: minmax(0, 1fr); } }
+  /* Grid items get an implicit min-width:auto too (the same gotcha flex
+     items have) — without this, a track's column refuses to shrink below
+     its longest unwrapped text, which is what let a long title blow
+     straight through the card edge instead of masking. */
+  .deck { min-width: 0; }
 
   .deck-label { font-size: 10.5px; letter-spacing: .16em; color: #666; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
   .deck-label .badge { font-size: 9.5px; color: #FF2D78; }
@@ -56,8 +133,24 @@
   .deck-art { width: 56px; height: 56px; border-radius: 10px; flex: none; overflow: hidden; background: #111; display: flex; align-items: center; justify-content: center; color: #444; }
   .deck-art img { width: 100%; height: 100%; }
   .deck-meta { min-width: 0; }
-  .deck-meta .t { font-size: 13px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .deck-meta .t { font-size: 13px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; }
   .deck-meta .a { font-size: 11px; color: #999; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Marquee: long titles used to be hard-truncated with an ellipsis (or, in
+     the song picker, had no overflow handling at all and visibly spilled
+     past the card/modal edge). Instead every title now sits in a
+     scroll-masked strip; JS measures overflow and only elements that don't
+     fit get animated — short titles stay put. The full name always stays
+     intact, it just glides into view. */
+  .marquee-track { display: inline-block; white-space: nowrap; will-change: transform; }
+  .marquee-active .marquee-track {
+    animation: djTitleMarquee var(--marquee-duration, 8s) cubic-bezier(.45,0,.25,1) infinite;
+  }
+  @keyframes djTitleMarquee {
+    0%, 14%   { transform: translateX(0); }
+    45%, 55%  { transform: translateX(var(--marquee-shift, 0)); }
+    86%, 100% { transform: translateX(0); }
+  }
   .deck-pitch-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
   .deck-pitch-row span { font-size: 9.5px; color: #666; flex: none; }
   .deck-pitch-row input[type=range] { flex: 1; accent-color: #00FFD4; }
@@ -84,10 +177,14 @@
   .queue-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   .queue-head .lbl { font-size: 11px; letter-spacing: .1em; color: #789; }
   .queue-add-btn { width: 30px; height: 30px; border-radius: 50%; background: rgba(0,255,212,.15); border: 1px solid #00FFD4; color: #00FFD4; display: flex; align-items: center; justify-content: center; }
-  .queue-list { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
+  .queue-list-wrap { position: relative; }
+  .queue-list { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; padding-bottom: 32px; }
+  .queue-list::-webkit-scrollbar, .dj-modal::-webkit-scrollbar { width: 7px; }
   .queue-row { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 8px; background: rgba(255,255,255,.03); cursor: pointer; }
   .queue-row:hover { background: rgba(255,255,255,.07); }
-  .queue-row .t { flex: 1; font-size: 12px; color: #ddd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .queue-row .t { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; font-size: 12px; color: #ddd; white-space: nowrap; }
+  .queue-row .t .q-arrow { flex: none; }
+  .queue-row .t .marquee-mask { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; }
   .queue-row .a { font-size: 10.5px; color: #777; flex: none; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .queue-row .rm { color: #666; padding: 2px 6px; flex: none; }
   .queue-empty { font-size: 12px; color: #666; text-align: center; padding: 18px 0; }
@@ -108,13 +205,17 @@
   /* Song picker + settings modal (reuse app modal look, DJ-tinted) */
   .dj-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 60; display: flex; align-items: center; justify-content: center; padding: 20px; opacity: 0; pointer-events: none; transition: opacity .2s; }
   .dj-modal-overlay.open { opacity: 1; pointer-events: auto; }
-  .dj-modal { background: #0A0A12; border: 1px solid rgba(255,255,255,.15); border-radius: 14px; width: 100%; max-width: 400px; padding: 18px; max-height: 78vh; overflow-y: auto; }
+  .dj-modal { position: relative; background: #0A0A12; border: 1px solid rgba(255,255,255,.15); border-radius: 14px; width: 100%; max-width: 400px; padding: 18px; max-height: 78vh; overflow-y: auto; }
   .dj-modal h3 { font-size: 14px; letter-spacing: .08em; color: #00FFD4; margin: 0 0 12px; }
   .dj-modal input[type=text] { width: 100%; background: #16161f; border: 1px solid rgba(255,255,255,.15); color: #fff; border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-bottom: 10px; }
   .dj-modal-row { display: flex; align-items: center; gap: 10px; padding: 9px 6px; border-radius: 8px; cursor: pointer; font-size: 12.5px; color: #ddd; }
   .dj-modal-row:hover { background: rgba(255,255,255,.06); }
-  .dj-modal-row .a { color: #888; font-size: 11px; margin-left: auto; }
-  .dj-modal-close { width: 100%; margin-top: 10px; padding: 10px; border-radius: 8px; background: rgba(255,255,255,.08); color: #ccc; border: none; font-size: 12.5px; }
+  /* Was unstyled and unbounded, so a long title just ran the row past the
+     modal's edge instead of wrapping or scrolling — the actual "spill"
+     bug. Now it's a proper flexed, overflow-masked marquee strip. */
+  .dj-modal-row .t { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; }
+  .dj-modal-row .a { color: #888; font-size: 11px; margin-left: auto; flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dj-modal-close { position: sticky; bottom: 0; width: 100%; margin-top: 10px; padding: 12px; border-radius: 8px; background: #14141d; color: #ccc; border: 1px solid rgba(255,255,255,.12); font-size: 12.5px; box-shadow: 0 -6px 12px -4px rgba(0,0,0,.5); }
   .dj-about-text { font-size: 12px; color: #bbb; line-height: 1.9; white-space: pre-line; }
 </style>
 </head>
@@ -131,6 +232,7 @@
       <div class="dj-status" id="djStatus">Loading library…</div>
     </div>
     <button class="dj-icon-btn" id="djVisualBtn" title="Cycle visual theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2m10-10h-2M4 12H2m15.5-7.5l-1.4 1.4M7.9 16.1l-1.4 1.4m0-11l1.4 1.4m9.2 9.2l1.4 1.4"/></svg></button>
+    <button class="dj-icon-btn" id="djEqBtn" title="Equalizer (E)" aria-label="Equalizer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></button>
     <button class="dj-icon-btn" id="djSettingsBtn" title="DJ Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.9-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1-1.6 1.7 1.7 0 00-1.9.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.9 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1 1.7 1.7 0 00-.3-1.9l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.9.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.9-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.9V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg></button>
   </div>
 
@@ -197,7 +299,9 @@
         <span class="lbl">⚔ BATTLE QUEUE</span>
         <button class="queue-add-btn" id="djAddQueueBtn" title="Add to queue"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
       </div>
-      <div class="queue-list" id="queueList"><div class="queue-empty">Queue is empty — add tracks to auto-load when a deck finishes.</div></div>
+      <div class="queue-list-wrap" id="queueListWrap">
+        <div class="queue-list" id="queueList"><div class="queue-empty">Queue is empty — add tracks to auto-load when a deck finishes.</div></div>
+      </div>
     </div>
   </div>
 </div>
@@ -248,7 +352,26 @@ TAP A QUEUED TRACK TO LOAD IT ON THE NEXT IDLE DECK. USE × TO REMOVE.</div>
 
 <div id="toast"></div>
 
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="djScrollGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E8C468"/>
+      <stop offset="1" stop-color="#7A1428"/>
+    </linearGradient>
+  </defs>
+</svg>
+<button id="scrollTopBtn" class="dj-scrolltop" type="button" title="Haul to the top" aria-label="Scroll to top">
+  <svg class="dj-scrolltop-ring" viewBox="0 0 44 44">
+    <circle class="dj-scrolltop-track" cx="22" cy="22" r="19"/>
+    <circle class="dj-scrolltop-fill" id="scrollTopFill" cx="22" cy="22" r="19"/>
+  </svg>
+  <svg class="dj-scrolltop-arrow" viewBox="0 0 24 24" fill="none" stroke="#E8C468" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 21.5V6.5M8 10.5l4-4 4 4"/>
+  </svg>
+</button>
+
 <script src="shared.js"></script>
+<script src="eq.js"></script>
 <script src="dj.js"></script>
 </body>
 </html>

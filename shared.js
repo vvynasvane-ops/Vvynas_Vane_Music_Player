@@ -690,6 +690,46 @@ async function walkDirectory(dirHandle, extRegex, onProgress) {
    silently stalling. */
 const AUDIO_EXT = /\.(mp3|mp2|m4a|m4b|m4p|m4r|aac|wav|wave|flac|ogg|oga|ogx|opus|weba|webm|wma|aiff|aif|aifc|amr|mka|caf|3gp|3g2|3ga|spx|ape|mpc|tta|wv|au|snd|mid|midi)$/i;
 
+/* Explicit MIME types for every AUDIO_EXT extension — do not rely on
+ * File.type, which the File System Access API and <input webkitdirectory>
+ * frequently report as "" (or something wrong) for anything past mp3/
+ * m4a/wav, depending on OS and browser. An empty/incorrect blob MIME type
+ * can make a browser refuse to even attempt playback of a file its audio
+ * decoder could otherwise handle perfectly well (FLAC and OGG/Opus on
+ * Windows are the most common victims) — so every file gets re-wrapped
+ * with the correct type from this map before its object URL is created
+ * (see typedBlob below). Formats no mainstream browser decodes at all
+ * (APE, Musepack, WavPack, TTA, WMA, AMR, MIDI) are still listed here so
+ * they get a *correct* MIME type too — it won't make them playable, but
+ * it keeps canPlayType() checks and error messages accurate rather than
+ * guessing off a blank type. */
+const AUDIO_MIME_BY_EXT = {
+  mp3: "audio/mpeg", mp2: "audio/mpeg",
+  m4a: "audio/mp4", m4b: "audio/mp4", m4p: "audio/mp4", m4r: "audio/mp4",
+  aac: "audio/aac", wav: "audio/wav", wave: "audio/wav", flac: "audio/flac",
+  ogg: "audio/ogg", oga: "audio/ogg", ogx: "audio/ogg", opus: "audio/ogg", spx: "audio/ogg",
+  weba: "audio/webm", webm: "audio/webm", wma: "audio/x-ms-wma",
+  aiff: "audio/aiff", aif: "audio/aiff", aifc: "audio/aiff",
+  amr: "audio/amr", mka: "audio/x-matroska", caf: "audio/x-caf",
+  "3gp": "audio/3gpp", "3g2": "audio/3gpp2", "3ga": "audio/3gpp",
+  ape: "audio/x-ape", mpc: "audio/x-musepack", tta: "audio/x-tta", wv: "audio/x-wavpack",
+  au: "audio/basic", snd: "audio/basic", mid: "audio/midi", midi: "audio/midi",
+};
+
+/** Re-wraps `file` in a Blob carrying the right MIME type for `ext` (looked
+ *  up in `mimeMap`, e.g. AUDIO_MIME_BY_EXT), but only when that's actually
+ *  an improvement — i.e. the file's own reported type is missing or
+ *  differs. Slicing an already-correct file would be pure overhead, and
+ *  the resulting Blob is otherwise byte-identical, so this is always safe
+ *  to call before URL.createObjectURL(). Returns `file` unchanged if
+ *  there's no mapped type or no File to work with. */
+function typedBlob(file, ext, mimeMap) {
+  if (!file) return file;
+  const mime = mimeMap[(ext || "").toLowerCase()];
+  if (!mime || file.type === mime) return file;
+  return file.slice(0, file.size, mime);
+}
+
 /* ---------------------------------------------------------------------
    Small canvas-drawing helpers mirroring the Android Canvas/Paint API
    used throughout AnimatedThemeView.java, so every theme below reads
@@ -1557,12 +1597,16 @@ const PixieDust = (function () {
 const BookTransition = (function () {
   let el;
   function init(elementId) { el = document.getElementById(elementId); }
+  let hideTimer = null;
   function play() {
     if (!el) return;
     el.classList.remove("book-playing"); void el.offsetWidth; // restart animation
     el.classList.add("book-playing");
     el.style.display = "flex";
-    setTimeout(() => { el.style.display = "none"; }, 700);
+    // Cancel the previous hide timer: with rapid next/prev taps an older
+    // timer used to fire mid-animation and cut the newest transition short.
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => { el.style.display = "none"; }, 700);
   }
   return { init, play };
 })();
@@ -1605,6 +1649,741 @@ const GlobeTitle = (function () {
 })();
 
 /* ---------------------------------------------------------------------
+   Volume control + keyboard-shortcut catalog
+   Shared by the audio player (index.html) and the video player
+   (video.html) so both behave — and are documented — identically.
+   --------------------------------------------------------------------- */
+
+/** Wraps a media element (<audio> or <video>) with one source of truth for
+ *  volume + mute. Volume is remembered per environment (storageKey) in the
+ *  same IndexedDB "kv" store as the rest of the app's settings; mute is
+ *  deliberately NOT remembered, so the app never opens silent by surprise.
+ *
+ *  iOS Safari ignores writes to media.volume (the hardware buttons own it),
+ *  so `supported` is feature-detected and the UI hides its slider there —
+ *  mute (media.muted) still works everywhere. */
+function createVolumeController(media, { storageKey, step = 5 } = {}) {
+  const supported = (() => {
+    try {
+      const prev = media.volume;
+      media.volume = 0.5;
+      const ok = Math.abs(media.volume - 0.5) < 0.01;
+      media.volume = prev;
+      return ok;
+    } catch (e) { return false; }
+  })();
+  const st = { volume: 100, muted: false, last: 100 };
+  const subs = [];
+  let saveTimer = null;
+
+  function apply() {
+    media.muted = st.muted;
+    if (supported) media.volume = st.volume / 100;
+  }
+  function notify() { const snap = api.state; subs.forEach(fn => { try { fn(snap); } catch (e) { /* a UI listener must never break playback */ } }); }
+  function persist() {
+    if (!storageKey) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { idbSet("kv", storageKey, { volume: st.volume }).catch(() => {}); }, 300);
+  }
+  function commit() { apply(); notify(); persist(); }
+
+  const api = {
+    supported, step,
+    get state() { return { volume: st.volume, muted: st.muted, level: st.muted ? 0 : st.volume, supported }; },
+    subscribe(fn) { subs.push(fn); fn(api.state); },
+    /** Sets volume 0–100. Any audible value also unmutes. */
+    set(pct) {
+      pct = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+      st.volume = pct;
+      if (pct > 0) { st.last = pct; st.muted = false; }
+      commit();
+    },
+    /** dir = +1 / -1, moves by `step` percent. */
+    nudge(dir) { api.set(st.volume + dir * step); },
+    toggleMute() {
+      if (st.muted || st.volume === 0) {
+        st.muted = false;
+        if (st.volume === 0) st.volume = st.last || 50;
+      } else {
+        st.muted = true;
+      }
+      commit();
+    },
+    async load() {
+      if (storageKey) {
+        try {
+          const saved = await idbGet("kv", storageKey);
+          if (saved && typeof saved.volume === "number") {
+            st.volume = Math.max(0, Math.min(100, Math.round(saved.volume)));
+            if (st.volume > 0) st.last = st.volume;
+          }
+        } catch (e) { /* first run / storage unavailable — keep the 100% default */ }
+      }
+      apply(); notify();
+    },
+  };
+  return api;
+}
+
+/** Inner SVG markup for a speaker icon: muted/0 → ✕, <50 → one wave, else two. */
+function volumeIconMarkup(level) {
+  const base = '<path d="M11 5L6 9H2v6h4l5 4V5z"/>';
+  if (level <= 0) return base + '<path d="M22 9l-6 6M16 9l6 6"/>';
+  if (level < 50) return base + '<path d="M15.5 8.5a5 5 0 010 7"/>';
+  return base + '<path d="M15.5 8.5a5 5 0 010 7M19 5a10 10 0 010 14"/>';
+}
+
+/** One catalog drives the on-screen notice, so what the Settings panel
+ *  (audio) / Shortcuts panel (video) says can't drift from the key map
+ *  documented here. The handlers themselves live in app.js and video.js. */
+const SHORTCUTS = {
+  audio: [
+    { keys: ["Space"],          label: "Play / Pause" },
+    { keys: ["Shift", "↑"],     label: "Volume up 5%" },
+    { keys: ["Shift", "↓"],     label: "Volume down 5%" },
+    { keys: ["M"],              label: "Mute / Unmute" },
+    { keys: ["←"],              label: "Rewind 5 seconds" },
+    { keys: ["→"],              label: "Forward 5 seconds" },
+    { keys: ["Shift", "←"],     label: "Previous song" },
+    { keys: ["Shift", "→"],     label: "Next song" },
+    { keys: ["S"],              label: "Shuffle on / off" },
+    { keys: ["R"],              label: "Repeat: off → all → one" },
+    { keys: ["L"],              label: "Open / close lyrics" },
+    { keys: ["E"],              label: "Open / close equalizer" },
+  ],
+  video: [
+    { keys: ["Space"],          label: "Play / Pause" },
+    { keys: ["Shift", "↑"],     label: "Volume up 5%" },
+    { keys: ["Shift", "↓"],     label: "Volume down 5%" },
+    { keys: ["M"],              label: "Mute / Unmute" },
+    { keys: ["←"],              label: "Rewind 5 seconds" },
+    { keys: ["→"],              label: "Forward 5 seconds" },
+    { keys: ["Shift", "←"],     label: "Previous video" },
+    { keys: ["Shift", "→"],     label: "Next video" },
+    { keys: ["F"],              label: "Fullscreen on / off" },
+    { keys: ["V"],              label: "Cycle subtitle language" },
+    { keys: ["E"],              label: "Open / close equalizer" },
+  ],
+};
+const SHORTCUT_NOTES = {
+  audio: "Shortcuts pause while you're typing in a field. Esc closes whichever panel is open.",
+  video: "Shortcuts pause while you're typing in a field. Press / to jump to search.",
+};
+
+/** Fills `container` with the shortcut rows for env ("audio" | "video"). */
+function renderShortcutList(container, env, noteEl) {
+  if (!container) return;
+  const list = SHORTCUTS[env] || [];
+  container.innerHTML = list.map(s => `
+    <div class="shortcut-row">
+      <span class="shortcut-keys">${s.keys.map(k => `<kbd>${k}</kbd>`).join('<span class="shortcut-plus">+</span>')}</span>
+      <span class="shortcut-label">${s.label}</span>
+    </div>`).join("");
+  if (noteEl) noteEl.textContent = SHORTCUT_NOTES[env] || "";
+}
+
+/* ---------------------------------------------------------------------
+   Custom cursors — Westeros-themed pointers. Stored under kv/"cursorStyle"
+   (shared across the whole IndexedDB, same as dirHandle/settings) so a
+   choice made in the library's Settings modal is already active the
+   instant you land on the video room, the DJ booth, a playlist, a
+   folder, or even About/Privacy/Terms — no per-page setup needed.
+
+   Each theme has three drawings, not one: idle (resting), hover (over
+   anything clickable) and press (while it's actually being pressed) — so
+   the cursor visibly reacts instead of sitting as one static glyph. Which
+   drawing is showing lives entirely in the single --vv-cursor custom
+   property on <html>; swapping it is all _setCursorState ever does.
+   --------------------------------------------------------------------- */
+const CURSOR_OPTIONS = [
+  { id: "arrow",     label: "Arrow",            hint: "The default pointer" },
+  { id: "sword",     label: "Valyrian Steel",   hint: "A longsword tip" },
+  { id: "dragon",    label: "Dragonclaw",       hint: "A wing & claw" },
+  { id: "quill",     label: "Raven's Quill",    hint: "A raven feather" },
+  { id: "potion",    label: "Wildfire Vial",    hint: "A bubbling potion" },
+  { id: "needle",    label: "Maester's Needle", hint: "A silver syringe" },
+  { id: "ironfist",  label: "Iron Fist",        hint: "A mailed gauntlet" },
+  { id: "nighthawk", label: "Night Hawk",       hint: "A hunting falcon" },
+  { id: "crow",      label: "Carrion Crow",     hint: "A watching crow" },
+  { id: "butterfly", label: "Butterfly",        hint: "Folded wings" },
+  { id: "spaceship", label: "Star Skiff",       hint: "A silver rocket" },
+  { id: "pen",       label: "Inkwell Pen",      hint: "A fountain nib" },
+  { id: "rifle",     label: "Old Iron",         hint: "A battered rifle" },
+  { id: "snake",     label: "Serpent's Eye",    hint: "A coiled viper" },
+  { id: "okhand",    label: "All Good",         hint: "👌" },
+  { id: "flip",      label: "Not Today",        hint: "🖕" },
+  { id: "luck",      label: "Fingers Crossed",  hint: "🤞" },
+];
+function _cursorSvgMarkup(id, state) {
+  state = state || "idle";
+  switch (id) {
+    case "sword": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+        <path d='M18 2 L23 19 L18 24 L13 19 Z' fill='#F5ECCF' stroke='#E8C468' stroke-width='1.6'/>
+        <path d='M15.4 8 L17 15' stroke='#FFFFFF' stroke-width='1' stroke-linecap='round' opacity='0.85'/>
+        <path d='M9 19 L27 19' stroke='#C9A84C' stroke-width='2.8' stroke-linecap='round'/>
+        <rect x='16.4' y='24' width='3.2' height='9' rx='1' fill='#6B5726'/>
+        <circle cx='18' cy='33.4' r='2.3' fill='#E8C468' stroke='#5C4A1E' stroke-width='0.8'/>
+      </svg>`;
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+        <circle cx='18' cy='4.2' r='3.4' fill='#FFF3C9' opacity='0.55'/>
+        <path d='M18 2 L23 19 L18 24 L13 19 Z' fill='#FFF6DE' stroke='#F0D27A' stroke-width='1.8'/>
+        <path d='M9 19 L27 19' stroke='#E8C468' stroke-width='3' stroke-linecap='round'/>
+        <rect x='16.4' y='24' width='3.2' height='9' rx='1' fill='#7A6530'/>
+        <circle cx='18' cy='33.4' r='2.4' fill='#F5D98A' stroke='#5C4A1E' stroke-width='0.8'/>
+      </svg>`;
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+        <path d='M18 2 L23 19 L18 24 L13 19 Z' fill='#EDE3C8' stroke='#C9A84C' stroke-width='1.3'/>
+        <path d='M9 19 L27 19' stroke='#8A6E2A' stroke-width='2.6' stroke-linecap='round'/>
+        <rect x='16.4' y='24' width='3.2' height='9' rx='1' fill='#5C4A1E'/>
+        <circle cx='18' cy='33.4' r='2.1' fill='#C9A84C' stroke='#5C4A1E' stroke-width='0.8'/>
+      </svg>`;
+    }
+    case "dragon": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+        <path d='M4 32 C5 22 11 12 21 8 C27 5.5 31 6 33 3 C33.5 8.5 30.5 12 27 13.5 C31 14.5 33.5 18.5 32.5 23 C29 19.5 24.5 18.5 21.5 19.5 C14 22 8.5 27 6 34 Z'
+          fill='#181818' stroke='#E8462B' stroke-width='1.4'/>
+        <path d='M20.5 8.5 L18.5 3' stroke='#E8462B' stroke-width='1.6' stroke-linecap='round'/>
+        <path d='M23.5 6.5 L22.5 1.7' stroke='#E8462B' stroke-width='1.4' stroke-linecap='round'/>
+        <circle cx='32.5' cy='4' r='1.6' fill='#FF7A29'/>
+        <circle cx='25' cy='11' r='1.15' fill='#E8C468'/>
+      </svg>`;
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+        <path d='M4 32 C5 22 11 12 21 8 C27 5.5 31 6 33 3 C33.5 8.5 30.5 12 27 13.5 C31 14.5 33.5 18.5 32.5 23 C29 19.5 24.5 18.5 21.5 19.5 C14 22 8.5 27 6 34 Z'
+          fill='#1c1c1c' stroke='#FF7A29' stroke-width='1.6'/>
+        <path d='M20.5 8.5 L18.5 3' stroke='#FF7A29' stroke-width='1.7' stroke-linecap='round'/>
+        <path d='M23.5 6.5 L22.5 1.7' stroke='#FF7A29' stroke-width='1.5' stroke-linecap='round'/>
+        <circle cx='32' cy='4' r='3.4' fill='#FF9A45' opacity='0.55'/>
+        <circle cx='32.5' cy='4' r='1.8' fill='#FFD24A'/>
+        <circle cx='25' cy='11' r='1.25' fill='#FFD24A'/>
+      </svg>`;
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+        <path d='M4 32 C5 22 11 12 21 8 C27 5.5 31 6 33 3 C33.5 8.5 30.5 12 27 13.5 C31 14.5 33.5 18.5 32.5 23 C29 19.5 24.5 18.5 21.5 19.5 C14 22 8.5 27 6 34 Z'
+          fill='#141414' stroke='#B22222' stroke-width='1.2'/>
+        <path d='M20.5 8.5 L18.5 3' stroke='#B22222' stroke-width='1.5' stroke-linecap='round'/>
+        <path d='M23.5 6.5 L22.5 1.7' stroke='#B22222' stroke-width='1.3' stroke-linecap='round'/>
+        <circle cx='25' cy='11' r='1.15' fill='#C9A84C'/>
+      </svg>`;
+    }
+    case "quill": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='36' viewBox='0 0 34 36'>
+        <path d='M30 2 C22 6 12 14 6 30 L4 34 L8 32 C22 26 28 16 32 4 Z' fill='#181818' stroke='#C9A84C' stroke-width='1.1'/>
+        <path d='M30 2 C24 8 16 16 8 28' stroke='#E8C468' stroke-width='0.9' fill='none' opacity='0.75'/>
+        <path d='M4 34 L8 32 L9 33.4 Z' fill='#6B5726'/>
+        <circle cx='5.4' cy='33.1' r='1.3' fill='#2A3A8C' opacity='0.85'/>
+      </svg>`;
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='36' viewBox='0 0 34 36'>
+        <path d='M30 2 C22 6 12 14 6 30 L4 34 L8 32 C22 26 28 16 32 4 Z' fill='#1c1c1c' stroke='#E8C468' stroke-width='1.2'/>
+        <path d='M30 2 C24 8 16 16 8 28' stroke='#F5D98A' stroke-width='1' fill='none' opacity='0.85'/>
+        <path d='M4 34 L8 32 L9 33.4 Z' fill='#7A6530'/>
+        <circle cx='5.2' cy='33.4' r='1.4' fill='#3546A8'/>
+        <path d='M4 34.4 L2.4 35.9' stroke='#3546A8' stroke-width='1.4' stroke-linecap='round'/>
+        <circle cx='2' cy='36' r='0.9' fill='#3546A8'/>
+      </svg>`;
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='36' viewBox='0 0 34 36'>
+        <path d='M30 2 C22 6 12 14 6 30 L4 34 L8 32 C22 26 28 16 32 4 Z' fill='#181818' stroke='#8B9CA8' stroke-width='1'/>
+        <path d='M30 2 C24 8 16 16 8 28' stroke='#C9A84C' stroke-width='0.8' fill='none' opacity='0.65'/>
+        <path d='M4 34 L8 32 L9 33.4 Z' fill='#5C4A1E'/>
+      </svg>`;
+    }
+    case "potion": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='30' height='36' viewBox='0 0 30 36'>
+        <circle cx='15' cy='23' r='11' fill='#7A4FBF' opacity='0.18'/>
+        <path d='M12 2 H18 V9 L24 22 C26 26 24 32 18 32 H12 C6 32 4 26 6 22 L12 9 Z' fill='#1c1c1c' stroke='#9C6FE0' stroke-width='1.5'/>
+        <rect x='11' y='1' width='8' height='3' rx='1' fill='#6B5726'/>
+        <path d='M8 21 C8 18 11.5 17 15 17 C18.5 17 22 18 22 21 C22 27 18 29.5 15 29.5 C12 29.5 8 27 8 21 Z' fill='#8B4FE8'/>
+        <circle cx='12.5' cy='23' r='1.1' fill='#D9B8FF'/>
+        <circle cx='17' cy='20' r='0.8' fill='#D9B8FF'/>
+        <circle cx='16' cy='25.5' r='0.9' fill='#D9B8FF'/>
+      </svg>`;
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='30' height='38' viewBox='0 0 30 38'>
+        <circle cx='15' cy='23' r='13' fill='#B98CFF' opacity='0.3'/>
+        <path d='M12 2 H18 V9 L24 22 C26 26 24 32 18 32 H12 C6 32 4 26 6 22 L12 9 Z' fill='#222' stroke='#D9B8FF' stroke-width='1.7'/>
+        <rect x='11' y='1' width='8' height='3' rx='1' fill='#7A6530'/>
+        <path d='M8 21 C8 18 11.5 17 15 17 C18.5 17 22 18 22 21 C22 28 18 30.5 15 30.5 C12 30.5 8 28 8 21 Z' fill='#A868FF'/>
+        <path d='M15 32 L13 37 M15 32 L15 38 M15 32 L17 37' stroke='#C9A0FF' stroke-width='1.2' stroke-linecap='round'/>
+      </svg>`;
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='30' height='36' viewBox='0 0 30 36'>
+        <path d='M12 2 H18 V9 L24 22 C26 26 24 32 18 32 H12 C6 32 4 26 6 22 L12 9 Z' fill='#181818' stroke='#5B3A94' stroke-width='1.2'/>
+        <rect x='11' y='1' width='8' height='3' rx='1' fill='#5C4A1E'/>
+        <path d='M9 22 C9 19 12 18 15 18 C18 18 21 19 21 22 C21 27 18 29 15 29 C12 29 9 27 9 22 Z' fill='#5B2E9E' opacity='0.85'/>
+        <circle cx='13' cy='24' r='1' fill='#B18CE0'/>
+      </svg>`;
+    }
+    case "needle": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='36' viewBox='0 0 34 36'>
+        <path d='M30 2 L32 4 L14 22' stroke='#D8D8D8' stroke-width='1.6'/>
+        <rect x='11.5' y='18.3' width='16' height='6.5' rx='1.5' transform='rotate(45 11.5 18.3)' fill='#1c1c1c' stroke='#B7C4CC' stroke-width='1.3'/>
+        <rect x='6' y='23' width='9' height='3.4' rx='1' transform='rotate(45 6 23)' fill='#3A3A3A'/>
+        <circle cx='12.5' cy='19.5' r='2.2' fill='#E8462B'/>
+        <circle cx='12.5' cy='19.5' r='3.6' fill='#FF6A45' opacity='0.35'/>
+      </svg>`;
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='38' viewBox='0 0 34 38'>
+        <path d='M30 2 L32 4 L15 21' stroke='#F0F0F0' stroke-width='1.8'/>
+        <rect x='12' y='18.8' width='13' height='6.5' rx='1.5' transform='rotate(45 12 18.8)' fill='#222' stroke='#E8C468' stroke-width='1.3'/>
+        <rect x='7' y='23.5' width='9' height='3.4' rx='1' transform='rotate(45 7 23.5)' fill='#4A4A4A'/>
+        <circle cx='13.5' cy='20' r='1.8' fill='#FF3A1E'/>
+        <path d='M13.5 22 L11 30 M13.5 22 L15 30' stroke='#FF6A45' stroke-width='1.2' stroke-linecap='round'/>
+      </svg>`;
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='36' viewBox='0 0 34 36'>
+        <path d='M30 2 L32 4 L13 23' stroke='#8B9CA8' stroke-width='1.3'/>
+        <rect x='10.5' y='19.3' width='16' height='6.5' rx='1.5' transform='rotate(45 10.5 19.3)' fill='#181818' stroke='#6B7880' stroke-width='1.1'/>
+        <rect x='5' y='24' width='9' height='3.4' rx='1' transform='rotate(45 5 24)' fill='#2E2E2E'/>
+        <circle cx='11.5' cy='20.5' r='1.5' fill='#8A2E22'/>
+      </svg>`;
+    }
+    case "ironfist": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+        <path d='M9 16 L9 10 C9 7 12 6 13 8 L13 6 C13 3.5 17 3.5 17 6 L17 5 C17 2.5 21 2.5 21 5 L21 7 C21 4.5 25 4.5 25 7 L25 16 L27 20 C28 26 24 32 17 32 C11 32 7 27 7 21 Z'
+          fill='#26262A' stroke='#E8C468' stroke-width='1.4'/>
+        <path d='M13 8 L13 17 M17 6 L17 17 M21 7 L21 17' stroke='#3A3A40' stroke-width='1.1'/>
+        <circle cx='30' cy='9' r='2' fill='#FFE9A8' opacity='0.7'/>
+      </svg>`;
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='38' height='38' viewBox='0 0 38 38'>
+        <path d='M17 2 L18 12 M11 3 L13 13 M25 3 L23 13 M4 8 L12 14 M32 8 L24 14' stroke='#FFD24A' stroke-width='1.3' stroke-linecap='round' opacity='0.9'/>
+        <path d='M9 16 L9 10 C9 7 12 6 13 8 L13 6 C13 3.5 17 3.5 17 6 L17 5 C17 2.5 21 2.5 21 5 L21 7 C21 4.5 25 4.5 25 7 L25 16 L27 20 C28 26 24 32 17 32 C11 32 7 27 7 21 Z'
+          fill='#303036' stroke='#FFD24A' stroke-width='1.7'/>
+        <path d='M13 8 L13 17 M17 6 L17 17 M21 7 L21 17' stroke='#4A4A50' stroke-width='1.1'/>
+      </svg>`;
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+        <path d='M9 16 L9 10 C9 7 12 6 13 8 L13 6 C13 3.5 17 3.5 17 6 L17 5 C17 2.5 21 2.5 21 5 L21 7 C21 4.5 25 4.5 25 7 L25 16 L27 20 C28 26 24 32 17 32 C11 32 7 27 7 21 Z'
+          fill='#1c1c1e' stroke='#6B6B70' stroke-width='1.1'/>
+        <path d='M13 8 L13 17 M17 6 L17 17 M21 7 L21 17' stroke='#333338' stroke-width='1'/>
+      </svg>`;
+    }
+    case "nighthawk": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+        <circle cx='27' cy='8' r='5' fill='#2A2A4A' opacity='0.6'/>
+        <path d='M3 20 C10 14 16 15 20 10 C22 7 26 6 30 7 C26 9 25 12 26 15 C22 16 18 19 16 24 C13 30 7 30 3 27 C7 26 9 23 8 20 C6 21 4 21 3 20 Z' fill='#12121A' stroke='#3D4E8C' stroke-width='1.2'/>
+        <circle cx='19' cy='14' r='1.3' fill='#FFC93C'/>
+        <circle cx='19' cy='14' r='2.4' fill='#FFC93C' opacity='0.4'/>
+      </svg>`;
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='38' height='36' viewBox='0 0 38 36'>
+        <circle cx='29' cy='7' r='5' fill='#33335A' opacity='0.7'/>
+        <path d='M1 22 C9 12 15 14 20 9 C23 5 28 4 33 6 C27 8 25 12 26 15 C21 16 16 20 14 26 C11 33 4 32 1 28 C6 27 9 22 7 19 C5 21 2 22 1 22 Z' fill='#15151E' stroke='#5A6FC0' stroke-width='1.4'/>
+        <circle cx='19' cy='13' r='1.5' fill='#FFD65C'/>
+        <circle cx='19' cy='13' r='3.2' fill='#FFD65C' opacity='0.45'/>
+        <path d='M30 4 L34 2 M31 8 L36 8' stroke='#FFD65C' stroke-width='1' opacity='0.6'/>
+      </svg>`;
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+        <circle cx='27' cy='8' r='4.5' fill='#22223A' opacity='0.5'/>
+        <path d='M4 19 C10 15 15 16 19 11 C21 8 25 7 28 8 C25 10 24 13 25 15 C21 17 18 20 16 25 C14 29 9 29 5 27 C9 25 10 22 9 20 C7 20 5 20 4 19 Z' fill='#141420' stroke='#2E3A6E' stroke-width='1'/>
+        <circle cx='18' cy='15' r='1' fill='#C9A84C'/>
+      </svg>`;
+    }
+    case "crow": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+        <path d='M14 8 C10 6 6 8 6 12 C6 15 9 16 8 20 C6 25 8 30 14 31 C12 27 13 24 16 22 C18 24 22 25 26 22 C22 22 20 19 22 15 C25 14 27 11 25 8 C23 10 21 11 19 10 C17 8 15 8 14 8 Z'
+          fill='#0d0d0d' stroke='#3A2E5C' stroke-width='1.1'/>
+        <path d='M6 12 L2 10 L6 15 Z' fill='#0d0d0d'/>
+        <circle cx='16' cy='13' r='1.3' fill='#E8462B'/>
+        <circle cx='16' cy='13' r='2.3' fill='#E8462B' opacity='0.35'/>
+      </svg>`;
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='38' height='36' viewBox='0 0 38 36'>
+        <path d='M18 10 C10 4 2 8 4 14 C6 18 12 16 12 20 C12 25 14 29 19 31 C17 26 18 23 21 22 C24 25 30 24 33 19 C27 21 24 17 27 13 C30 10 30 5 26 5 C24 9 20 10 18 10 Z'
+          fill='#111' stroke='#5A4590' stroke-width='1.4'/>
+        <path d='M4 14 L0 13 L5 17 Z' fill='#111'/>
+        <circle cx='19' cy='14' r='1.5' fill='#FF5A38'/>
+        <circle cx='19' cy='14' r='3' fill='#FF5A38' opacity='0.4'/>
+      </svg>`;
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+        <path d='M14 10 C11 8 8 9 8 12 C8 15 10 16 9 19 C8 23 9 27 14 28 C12 25 13 22 15 21 C17 22 20 23 23 21 C20 21 18 19 20 16 C22 15 23 13 22 11 C20 12 18 13 17 12 C15 10 15 10 14 10 Z'
+          fill='#0d0d0d' stroke='#232323' stroke-width='1'/>
+        <path d='M8 12 L5 11 L8 14 Z' fill='#0d0d0d'/>
+        <circle cx='16' cy='14' r='1.1' fill='#7A2A1E'/>
+      </svg>`;
+    }
+    case "butterfly": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='34' viewBox='0 0 36 34'>
+        <path d='M17 6 C10 -2 0 4 2 12 C4 18 12 17 17 10 Z' fill='#8B4FE8' opacity='0.85' stroke='#D9B8FF' stroke-width='0.8'/>
+        <path d='M17 6 C24 -2 34 4 32 12 C30 18 22 17 17 10 Z' fill='#E8C468' opacity='0.85' stroke='#FFE9A8' stroke-width='0.8'/>
+        <path d='M17 10 C11 15 4 16 3 22 C6 27 13 25 17 18 Z' fill='#8B4FE8' opacity='0.7'/>
+        <path d='M17 10 C23 15 30 16 31 22 C28 27 21 25 17 18 Z' fill='#E8C468' opacity='0.7'/>
+        <rect x='16' y='4' width='2' height='22' rx='1' fill='#1c1c1c'/>
+        <path d='M17 4 L14 0 M17 4 L20 0' stroke='#1c1c1c' stroke-width='1' stroke-linecap='round'/>
+      </svg>`;
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='38' height='34' viewBox='0 0 38 34'>
+        <circle cx='19' cy='15' r='16' fill='#E8C468' opacity='0.12'/>
+        <path d='M18 6 C9 -4 -2 4 1 13 C4 20 13 18 18 9 Z' fill='#A868FF' stroke='#F0DEFF' stroke-width='0.9'/>
+        <path d='M18 6 C27 -4 38 4 35 13 C32 20 23 18 18 9 Z' fill='#FFD65C' stroke='#FFF3C9' stroke-width='0.9'/>
+        <path d='M18 9 C11 15 3 17 2 23 C5 29 14 26 18 18 Z' fill='#A868FF' opacity='0.85'/>
+        <path d='M18 9 C25 15 33 17 34 23 C31 29 22 26 18 18 Z' fill='#FFD65C' opacity='0.85'/>
+        <rect x='17' y='4' width='2' height='23' rx='1' fill='#1c1c1c'/>
+        <circle cx='6' cy='4' r='1' fill='#FFD65C'/><circle cx='30' cy='2' r='0.8' fill='#FFD65C'/>
+      </svg>`;
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='20' height='34' viewBox='0 0 20 34'>
+        <path d='M10 6 C10 6 4 4 3 10 C2 16 8 18 10 14 C12 18 18 16 17 10 C16 4 10 6 10 6 Z' fill='#5B3A94' stroke='#8B6EC0' stroke-width='0.8'/>
+        <rect x='9' y='4' width='2' height='24' rx='1' fill='#1c1c1c'/>
+        <path d='M10 4 L8 0 M10 4 L12 0' stroke='#1c1c1c' stroke-width='0.9' stroke-linecap='round'/>
+      </svg>`;
+    }
+    case "spaceship": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='30' height='38' viewBox='0 0 30 38'>
+        <path d='M14 2 C18 6 20 14 20 20 L8 20 C8 14 10 6 14 2 Z' fill='#C7D2DA' stroke='#8B9CA8' stroke-width='1.1'/>
+        <circle cx='14' cy='13' r='2.6' fill='#3D8FE0' stroke='#0d0d0d' stroke-width='0.8'/>
+        <path d='M8 20 L3 27 L8 25 Z' fill='#8B9CA8'/>
+        <path d='M20 20 L25 27 L20 25 Z' fill='#8B9CA8'/>
+        <path d='M10 21 L18 21 L15 27 L13 27 Z' fill='#E8462B'/>
+        <path d='M12 27 L14 34 L16 27 Z' fill='#FF8A45' opacity='0.85'/>
+      </svg>`;
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='30' height='40' viewBox='0 0 30 40'>
+        <path d='M14 2 C18 6 20 14 20 20 L8 20 C8 14 10 6 14 2 Z' fill='#E4EBEF' stroke='#B7C4CC' stroke-width='1.2'/>
+        <circle cx='14' cy='13' r='2.6' fill='#5AAEFF' stroke='#0d0d0d' stroke-width='0.8'/>
+        <path d='M8 20 L2 28 L8 25 Z' fill='#B7C4CC'/>
+        <path d='M20 20 L26 28 L20 25 Z' fill='#B7C4CC'/>
+        <path d='M9 21 L19 21 L16 27 L12 27 Z' fill='#FF6A2E'/>
+        <path d='M11 27 L14 38 L17 27 Z' fill='#FFB05C'/>
+        <path d='M10 27 L8 33 M18 27 L20 33' stroke='#FFD65C' stroke-width='1' opacity='0.7'/>
+      </svg>`;
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='28' height='34' viewBox='0 0 28 34'>
+        <path d='M13 2 C16 6 18 13 18 18 L8 18 C8 13 10 6 13 2 Z' fill='#9AA7B0' stroke='#5A6870' stroke-width='0.9'/>
+        <circle cx='13' cy='12' r='2.2' fill='#2A6EB0'/>
+        <path d='M8 18 L4 24 L8 22 Z' fill='#5A6870'/>
+        <path d='M18 18 L22 24 L18 22 Z' fill='#5A6870'/>
+        <path d='M10 19 L16 19 L13 24 Z' fill='#B22222'/>
+      </svg>`;
+    }
+    case "pen": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='30' height='36' viewBox='0 0 30 36'>
+        <path d='M26 2 L28 4 L10 22 L6 20 L8 16 Z' fill='#1c1c1c' stroke='#E8C468' stroke-width='1.3'/>
+        <path d='M8 16 L10 22 L4 24 L6 20 Z' fill='#0d0d0d'/>
+        <path d='M4 24 L2 30 L8 28 L6 24.5 Z' fill='#181818' stroke='#8B9CA8' stroke-width='0.8'/>
+        <circle cx='9.5' cy='19' r='1.3' fill='#3D8FE0'/>
+        <circle cx='9.5' cy='19' r='2.3' fill='#3D8FE0' opacity='0.3'/>
+      </svg>`;
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='30' height='38' viewBox='0 0 30 38'>
+        <path d='M26 2 L28 4 L11 21 L7 19 L9 15 Z' fill='#222' stroke='#FFD65C' stroke-width='1.5'/>
+        <path d='M9 15 L11 21 L5 23 L7 19 Z' fill='#0d0d0d'/>
+        <path d='M5 23 L2 30 L9 27.5 L7 23.5 Z' fill='#1c1c1c' stroke='#A9B7C0' stroke-width='0.9'/>
+        <path d='M4 30 L2 36 M8 28 L10 34' stroke='#3D8FE0' stroke-width='1' opacity='0.6'/>
+        <circle cx='4' cy='31' r='1.4' fill='#3D8FE0'/>
+      </svg>`;
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='30' height='36' viewBox='0 0 30 36'>
+        <path d='M26 2 L28 4 L11 21 L7 19 L9 15 Z' fill='#181818' stroke='#8B9CA8' stroke-width='1'/>
+        <path d='M9 15 L11 21 L5 23 L7 19 Z' fill='#0d0d0d'/>
+        <path d='M5 23 L3 29 L8 27 L6.5 23.5 Z' fill='#141414' stroke='#5A6870' stroke-width='0.8'/>
+      </svg>`;
+    }
+    case "rifle": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='38' height='24' viewBox='0 0 38 24'>
+        <rect x='2' y='9' width='24' height='3.4' fill='#2A2A2A' stroke='#C9A84C' stroke-width='0.8'/>
+        <rect x='24' y='7.5' width='8' height='2.2' fill='#3A3A3A'/>
+        <path d='M8 12.4 C8 17 12 20 15 20 C13 17 12 14.5 12 12.4 Z' fill='#2A2A2A' stroke='#8B6E2A' stroke-width='0.7'/>
+        <path d='M2 9 L2 6 L0 6 L0 12 L2 12 Z' fill='#1c1c1c'/>
+        <rect x='16' y='6' width='8' height='2.6' rx='1' fill='#232323'/>
+        <path d='M32 8.6 L36 7 L36 12 L32 10.4 Z' fill='#B22222'/>
+        <circle cx='34' cy='9.5' r='1.6' fill='#FF7A29' opacity='0.6'/>
+      </svg>`;
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='40' height='26' viewBox='0 0 40 26'>
+        <rect x='2' y='9' width='24' height='3.4' fill='#333' stroke='#E8C468' stroke-width='0.9'/>
+        <rect x='24' y='7.5' width='8' height='2.2' fill='#444'/>
+        <path d='M8 12.4 C8 17 12 20 15 20 C13 17 12 14.5 12 12.4 Z' fill='#333' stroke='#C9A84C' stroke-width='0.8'/>
+        <path d='M2 9 L2 6 L0 6 L0 12 L2 12 Z' fill='#222'/>
+        <rect x='16' y='6' width='8' height='2.6' rx='1' fill='#2a2a2a'/>
+        <path d='M32 4 L38 2 L36 9 L40 8 L34 14 L32 9 L28 11 Z' fill='#FFD24A'/>
+        <circle cx='33' cy='8' r='4' fill='#FFB44A' opacity='0.45'/>
+      </svg>`;
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='38' height='24' viewBox='0 0 38 24'>
+        <rect x='2' y='9' width='24' height='3.2' fill='#232323' stroke='#5C4A1E' stroke-width='0.7'/>
+        <rect x='24' y='7.6' width='7' height='2' fill='#2E2E2E'/>
+        <path d='M8 12.2 C8 16 11.5 18.6 14 18.6 C12.3 16 11.5 14 11.5 12.2 Z' fill='#232323' stroke='#4A3A18' stroke-width='0.6'/>
+        <path d='M2 9 L2 6.2 L0.4 6.2 L0.4 11.8 L2 11.8 Z' fill='#181818'/>
+        <rect x='16' y='6.2' width='7.5' height='2.4' rx='1' fill='#1e1e1e'/>
+      </svg>`;
+    }
+    case "snake": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
+        <path d='M20 6 C28 8 30 16 25 20 C30 22 30 30 22 32 C24 26 22 23 17 23 C12 23 9 26 9 30 C6 26 8 21 13 19 C8 18 7 12 12 9 C10 13 12 16 16 16 C14 12 16 8 20 6 Z'
+          fill='#0d1a0d' stroke='#3AA24A' stroke-width='1.2'/>
+        <circle cx='19' cy='10' r='1.3' fill='#FFD65C'/>
+        <path d='M22 6 L26 4 M22 6 L25 8' stroke='#E8462B' stroke-width='1' stroke-linecap='round'/>
+      </svg>`;
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='38' height='34' viewBox='0 0 38 34'>
+        <path d='M22 4 C32 4 34 14 27 18 C33 20 33 29 24 31 C26 24 23 21 17 21 C11 21 8 25 8 30 C4 25 7 19 13 17 C7 16 6 9 12 6 C10 11 13 14 18 14 C15 10 17 6 22 4 Z'
+          fill='#0a140a' stroke='#4FD65E' stroke-width='1.4'/>
+        <circle cx='24' cy='7' r='1.5' fill='#FFE98A'/>
+        <path d='M28 3 L34 -1 M28 3 L33 6 M2 2 L-2 -2 M2 2 L4 6' stroke='#F5F5F5' stroke-width='1.3' stroke-linecap='round'/>
+      </svg>`;
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'>
+        <path d='M18 8 C24 9 26 15 22 18 C26 20 26 26 20 28 C21 23 19 21 15 21 C11 21 9 23 9 27 C6 24 8 20 12 18 C8 17 7 12 11 10 C10 13 12 15 15 15 C13 12 14 9 18 8 Z'
+          fill='#0d160d' stroke='#1E5A28' stroke-width='1'/>
+        <circle cx='17' cy='11' r='1' fill='#C9A84C'/>
+      </svg>`;
+    }
+    case "okhand": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'>
+        <circle cx='17' cy='17' r='14' fill='#E8C468' opacity='0.16'/>
+        <text x='17' y='23' font-size='24' text-anchor='middle'>👌</text>
+      </svg>`;
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='38' height='38' viewBox='0 0 38 38'>
+        <circle cx='19' cy='19' r='17' fill='#E8C468' opacity='0.26'/>
+        <text x='19' y='27' font-size='28' text-anchor='middle'>👌</text>
+      </svg>`;
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 30 30'>
+        <text x='15' y='21' font-size='20' text-anchor='middle'>👌</text>
+      </svg>`;
+    }
+    case "flip": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'>
+        <circle cx='17' cy='17' r='14' fill='#B22222' opacity='0.14'/>
+        <text x='17' y='23' font-size='24' text-anchor='middle'>🖕</text>
+      </svg>`;
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='38' height='38' viewBox='0 0 38 38'>
+        <circle cx='19' cy='19' r='17' fill='#B22222' opacity='0.24'/>
+        <text x='19' y='27' font-size='28' text-anchor='middle'>🖕</text>
+      </svg>`;
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 30 30'>
+        <text x='15' y='21' font-size='20' text-anchor='middle'>🖕</text>
+      </svg>`;
+    }
+    case "luck": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'>
+        <circle cx='17' cy='17' r='14' fill='#3AA24A' opacity='0.16'/>
+        <text x='17' y='23' font-size='24' text-anchor='middle'>🤞</text>
+      </svg>`;
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='38' height='38' viewBox='0 0 38 38'>
+        <circle cx='19' cy='19' r='17' fill='#3AA24A' opacity='0.26'/>
+        <text x='19' y='27' font-size='28' text-anchor='middle'>🤞</text>
+        <circle cx='6' cy='6' r='1' fill='#FFD65C'/><circle cx='30' cy='8' r='0.8' fill='#FFD65C'/>
+      </svg>`;
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 30 30'>
+        <text x='15' y='21' font-size='20' text-anchor='middle'>🤞</text>
+      </svg>`;
+    }
+    default: return null; // "arrow" — resets to the normal system pointer
+  }
+}
+function _cursorHotspot(id) {
+  switch (id) {
+    case "quill": case "pen": return "4 32";
+    case "sword": return "6 3";
+    case "needle": return "30 2";
+    case "spaceship": return "14 2";
+    case "rifle": return "2 10";
+    case "ironfist": return "17 16";
+    case "potion": return "15 2";
+    default: return "4 4";
+  }
+}
+const _cursorVariantCache = {};
+function _cursorCssValue(id, state) {
+  const key = id + ":" + (state || "idle");
+  if (_cursorVariantCache[key]) return _cursorVariantCache[key];
+  const svg = _cursorSvgMarkup(id, state);
+  const value = svg
+    ? `url("data:image/svg+xml,${encodeURIComponent(svg.replace(/\s+/g, " ").trim())}") ${_cursorHotspot(id)}, auto`
+    : "auto";
+  _cursorVariantCache[key] = value;
+  return value;
+}
+let _cursorStyleTag = null;
+function _ensureCursorStyleTag() {
+  if (_cursorStyleTag && document.head.contains(_cursorStyleTag)) return _cursorStyleTag;
+  _cursorStyleTag = document.getElementById("vv-cursor-style") || document.createElement("style");
+  _cursorStyleTag.id = "vv-cursor-style";
+  // The themed cursor is set once, on <html>, and reaches everything else
+  // purely by CSS inheritance — so any element that already declares its
+  // own cursor (a button's `pointer`, a draggable track's `grab`, a
+  // disabled control's `not-allowed`, the lyrics picker's `crosshair`)
+  // keeps it automatically: a rule matching the element always wins over
+  // an inherited value, no matter its specificity. Nothing has to be
+  // special-cased here — only the two genuinely ambiguous defaults below
+  // (text fields, disabled controls) need a nudge, because a browser's
+  // native handling for them isn't expressed as a cursor rule we can
+  // inherit past.
+  _cursorStyleTag.textContent = `
+    html[data-cursor]:not([data-cursor="arrow"]) { cursor: var(--vv-cursor); }
+    html[data-cursor]:not([data-cursor="arrow"]) input:not([type]),
+    html[data-cursor]:not([data-cursor="arrow"]) input[type="text"],
+    html[data-cursor]:not([data-cursor="arrow"]) input[type="search"],
+    html[data-cursor]:not([data-cursor="arrow"]) input[type="password"],
+    html[data-cursor]:not([data-cursor="arrow"]) input[type="email"],
+    html[data-cursor]:not([data-cursor="arrow"]) input[type="number"],
+    html[data-cursor]:not([data-cursor="arrow"]) input[type="tel"],
+    html[data-cursor]:not([data-cursor="arrow"]) input[type="url"],
+    html[data-cursor]:not([data-cursor="arrow"]) textarea,
+    html[data-cursor]:not([data-cursor="arrow"]) [contenteditable="true"] { cursor: text; }
+    html[data-cursor]:not([data-cursor="arrow"]) button:disabled,
+    html[data-cursor]:not([data-cursor="arrow"]) input:disabled,
+    html[data-cursor]:not([data-cursor="arrow"]) select:disabled,
+    html[data-cursor]:not([data-cursor="arrow"]) [aria-disabled="true"] { cursor: not-allowed; }
+  `;
+  if (!_cursorStyleTag.isConnected) document.head.appendChild(_cursorStyleTag);
+  return _cursorStyleTag;
+}
+function _setCursorState(state) {
+  const id = document.documentElement.getAttribute("data-cursor");
+  if (!id || id === "arrow") return;
+  document.documentElement.style.setProperty("--vv-cursor", _cursorCssValue(id, state));
+}
+/** Walk up from el looking for the nearest ancestor whose *own* resolved
+ *  cursor is "pointer" — i.e. something the page's own CSS already marked
+ *  clickable (a button, a playlist row, a slider track, a chip…), without
+ *  needing a hand-maintained list of selectors. Stops early at anything
+ *  that already has its own distinct affordance (grab, text, crosshair,
+ *  not-allowed) — that's a different kind of interactive, not a click
+ *  target, so it shouldn't borrow the "hover" cursor treatment. */
+function _clickableAncestor(el) {
+  let depth = 0;
+  while (el && el.nodeType === 1 && depth < 12) {
+    const cur = getComputedStyle(el).cursor;
+    if (cur === "pointer") return el;
+    // Anything else explicit (grab, text, crosshair, not-allowed…) is a
+    // different affordance, not a click target — stop rather than credit
+    // it as "clickable". Only "auto" or our own inherited url(...) value
+    // (still undecided at this level) keeps the search going upward.
+    if (cur && cur !== "auto" && cur.indexOf("url(") !== 0) return null;
+    el = el.parentElement; depth++;
+  }
+  return null;
+}
+let _cursorHoverBound = false, _cursorHoverTarget = null;
+function _initCursorHoverStates() {
+  if (_cursorHoverBound) return;
+  _cursorHoverBound = true;
+  document.addEventListener("pointerover", (e) => {
+    const target = _clickableAncestor(e.target);
+    if (target === _cursorHoverTarget) return;
+    _cursorHoverTarget = target;
+    _setCursorState(target ? "hover" : "idle");
+  }, { passive: true });
+  document.addEventListener("pointerdown", (e) => {
+    if (_clickableAncestor(e.target)) _setCursorState("press");
+  }, { passive: true });
+  document.addEventListener("pointerup", (e) => {
+    _setCursorState(_clickableAncestor(e.target) ? "hover" : "idle");
+  }, { passive: true });
+}
+function applyCursor(id) {
+  const opt = CURSOR_OPTIONS.find(c => c.id === id) || CURSOR_OPTIONS[0];
+  _ensureCursorStyleTag();
+  document.documentElement.setAttribute("data-cursor", opt.id);
+  document.documentElement.style.setProperty("--vv-cursor", _cursorCssValue(opt.id, "idle"));
+  return opt.id;
+}
+async function getCursorStyle() { return (await idbGet("kv", "cursorStyle")) || "arrow"; }
+async function setCursorStyle(id) { await idbSet("kv", "cursorStyle", id); return applyCursor(id); }
+async function initSharedCursor() { applyCursor(await getCursorStyle()); _initCursorHoverStates(); }
+
+/* ---------------------------------------------------------------------
+   Scroll-to-top — a gold Westeros-badge FAB with a rising arrow, on every
+   scrollable page/view (library, playlists, folders, folder & playlist
+   detail, video room, recap, About/Privacy/Terms). Self-contained: styles
+   + markup are injected here so no page-specific CSS is required.
+   dj.html mounts its own ring-progress version (#scrollTopBtn) — this one
+   backs off there so the two never stack in the same corner.
+   --------------------------------------------------------------------- */
+function _ensureScrollTopStyleTag() {
+  if (document.getElementById("vv-scrolltop-style")) return;
+  const s = document.createElement("style");
+  s.id = "vv-scrolltop-style";
+  s.textContent = `
+    .vv-scrolltop-fab {
+      position: fixed; right: 14px; bottom: calc(90px + env(safe-area-inset-bottom, 0px));
+      width: 50px; height: 50px; padding: 0; border: 1px solid rgba(201,168,76,0.45);
+      border-radius: 50%; background: radial-gradient(circle at 35% 28%, rgba(40,32,18,.92), rgba(8,8,8,.92) 72%);
+      backdrop-filter: blur(4px); cursor: pointer; z-index: 55; display: grid; place-items: center;
+      opacity: 0; transform: translateY(10px) scale(0.9); pointer-events: none;
+      transition: opacity .25s ease, transform .25s ease, border-color .2s ease, box-shadow .2s ease;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.5);
+    }
+    .vv-scrolltop-fab.show { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+    .vv-scrolltop-fab:hover { border-color: #C9A84C; box-shadow: 0 4px 18px rgba(0,0,0,.5), 0 0 14px rgba(201,168,76,.35); }
+    .vv-scrolltop-fab:active { transform: scale(.92); }
+    .vv-scrolltop-fab svg { width: 22px; height: 22px; overflow: visible; }
+    .vv-scrolltop-arrow { animation: vv-arrow-bob 2.4s ease-in-out infinite; transform-origin: 50% 65%; }
+    .vv-scrolltop-fab.launch .vv-scrolltop-arrow { animation: vv-arrow-launch .5s cubic-bezier(.3,.9,.4,1); }
+    @keyframes vv-arrow-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2.5px); } }
+    /* A single quick ascent-and-reset on click, standing in for the old
+       haul: the arrow darts up and fades, then resets low and fades back
+       in — read as "gone, then here again at the top". */
+    @keyframes vv-arrow-launch {
+      0%   { transform: translateY(0);   opacity: 1; }
+      42%  { transform: translateY(-8px); opacity: 0; }
+      43%  { transform: translateY(7px);  opacity: 0; }
+      100% { transform: translateY(0);   opacity: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .vv-scrolltop-arrow, .vv-scrolltop-fab.launch .vv-scrolltop-arrow { animation: none !important; }
+    }
+  `;
+  document.head.appendChild(s);
+}
+function _scrollTopMarkup() {
+  return `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="#E8C468" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path class="vv-scrolltop-arrow" d="M12 20.5V5.5M7 10l5-5 5 5"/>
+  </svg>`;
+}
+function _scrollTopTargets() {
+  const targets = [document.scrollingElement || document.documentElement];
+  document.querySelectorAll(".content-scroll, .modal.open, .dj-modal.open").forEach(el => { if (!targets.includes(el)) targets.push(el); });
+  return targets;
+}
+function initScrollTopWidget() {
+  if (document.getElementById("vvScrollTop")) return;
+  if (document.getElementById("scrollTopBtn")) return; // dj.html has its own
+  _ensureScrollTopStyleTag();
+  const btn = document.createElement("button");
+  btn.id = "vvScrollTop";
+  btn.type = "button";
+  btn.className = "vv-scrolltop-fab";
+  btn.title = "Back to the top";
+  btn.setAttribute("aria-label", "Scroll to top");
+  btn.innerHTML = _scrollTopMarkup();
+  document.body.appendChild(btn);
+  const update = () => {
+    const modalOpen = document.querySelector('[class*="overlay"].open, [class*="Overlay"].open');
+    btn.classList.toggle("show", !modalOpen && _scrollTopTargets().some(el => el.scrollTop > 240));
+  };
+  window.addEventListener("scroll", update, { passive: true });
+  document.addEventListener("scroll", (e) => { if (e.target && e.target.nodeType === 1) update(); }, { passive: true, capture: true });
+  // Re-check whenever a modal/sheet opens or closes, so the FAB never
+  // floats over a dialog — scrolling alone wouldn't catch that.
+  if (window.MutationObserver) {
+    new MutationObserver(update).observe(document.body, { attributes: true, attributeFilter: ["class"], subtree: true });
+  }
+  btn.addEventListener("click", () => {
+    btn.classList.add("launch");
+    _scrollTopTargets().forEach(el => el.scrollTo({ top: 0, behavior: "smooth" }));
+    setTimeout(() => btn.classList.remove("launch"), 550);
+  });
+  update();
+}
+
+/* ---------------------------------------------------------------------
+   Silent folder reconnect — a no-extra-click safety net on top of each
+   page's normal "Resume Access" flow. The File System Access API can
+   require a fresh user gesture to re-grant permission after a hard
+   navigation; this just means that as soon as the browser silently
+   reports the handle as granted again (tab refocus, bfcache restore,
+   permission re-evaluated), the caller is notified immediately instead
+   of leaving a stale "Resume Access" button sitting there.
+   --------------------------------------------------------------------- */
+function watchForSilentReconnect(handle, onReconnected) {
+  if (!handle || typeof onReconnected !== "function") return () => {};
+  let done = false;
+  const tryOnce = async () => {
+    if (done) return;
+    try {
+      if (await verifyPermission(handle, false)) { done = true; cleanup(); onReconnected(); }
+    } catch (_) { /* ignore — next trigger will retry */ }
+  };
+  const cleanup = () => {
+    document.removeEventListener("visibilitychange", tryOnce);
+    window.removeEventListener("focus", tryOnce);
+    window.removeEventListener("pageshow", tryOnce);
+  };
+  document.addEventListener("visibilitychange", tryOnce);
+  window.addEventListener("focus", tryOnce);
+  window.addEventListener("pageshow", tryOnce);
+  return cleanup;
+}
+
+if (document.body) { initSharedCursor(); initScrollTopWidget(); }
+else document.addEventListener("DOMContentLoaded", () => { initSharedCursor(); initScrollTopWidget(); });
+
+/* ---------------------------------------------------------------------
    Public export
    --------------------------------------------------------------------- */
 global.VV = {
@@ -1612,10 +2391,14 @@ global.VV = {
   openDB,
   FONTS, applyFont,
   fsApiSupported, verifyPermission, pickDirectory, getStoredHandle, walkDirectory, AUDIO_EXT,
+  AUDIO_MIME_BY_EXT, typedBlob,
   ThemeEngine, PixieDust, BookTransition, GlobeTitle,
   C, linGrad, radGrad, fillGrad,
   generatedArt, hashStr, setArtStyle, getArtStyle, ART_STYLES, drawSkullIcon,
   resizeImageFileToDataUrl, extractRawPictureBlob, getEmbeddedArtForFile,
+  createVolumeController, volumeIconMarkup, SHORTCUTS, renderShortcutList,
+  CURSOR_OPTIONS, applyCursor, getCursorStyle, setCursorStyle, initSharedCursor,
+  initScrollTopWidget, watchForSilentReconnect,
 };
 
 })(window);

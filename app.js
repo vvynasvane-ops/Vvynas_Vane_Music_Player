@@ -11,7 +11,8 @@
    IndexedDB — delegated to shared.js (VV) so index/video/recap pages
    never open the database at different versions and block each other.
    --------------------------------------------------------------------- */
-const { idbGet, idbSet, idbDelete, idbGetAll, idbGetAllKeys, idbGetAllEntries, idbPut, openDB } = window.VV;
+const { idbGet, idbSet, idbDelete, idbGetAll, idbGetAllKeys, idbGetAllEntries, idbPut, openDB,
+        createVolumeController, volumeIconMarkup, renderShortcutList } = window.VV;
 
 /* ---------------------------------------------------------------------
    State
@@ -21,7 +22,13 @@ const { idbGet, idbSet, idbDelete, idbGetAll, idbGetAllKeys, idbGetAllEntries, i
 // all agree on what counts as "a song" — see the comment there for the
 // full list and rationale.
 const AUDIO_EXT = window.VV.AUDIO_EXT;
+const AUDIO_MIME_BY_EXT = window.VV.AUDIO_MIME_BY_EXT;
+const typedBlob = window.VV.typedBlob;
 const RECENT_CAP = 100;
+// Sidecar lyric files ("Song.lrc" / "Song.txt" next to "Song.mp3") are indexed during the folder
+// scan by their path minus extension, and only ever *read* when that song's lyrics are opened.
+const LYRIC_EXT = /\.(lrc|txt)$/i;
+const lyricKey = (path) => path.replace(/\.[^./]+$/, "").toLowerCase();
 
 const state = {
   songs: [],            // {id, title, artist, album, folder, ext, duration, size, dateAdded, year, handleRef}
@@ -45,6 +52,9 @@ const state = {
   repeat: "off",         // off | all | one
   isPlaying: false,
   addToPlaylistTargetId: null,
+  newPlaylistAddTarget: null, // songs to drop into the playlist being created — set ONLY by the picker's "+ New Playlist" path
+  rowActionsTargetId: null,
+  rowActionsPlaylistId: null,
   settings: { light: false, resume: true, fontStyle: 0, themeId: "none", accentColor: "#C9A84C", accent2Color: "#B22222", artStyle: "sigil", rageMode: false, rageBackground: "none", rageDripType: "smoke", overlayStrength: 55, songListOverlay: 40 },
   usingFSApi: false,
   fileRefs: new Map(),   // songId -> File or FileSystemFileHandle
@@ -52,6 +62,8 @@ const state = {
   artCache: new Map(),   // unused (kept for backward compat with any external references)
   customArt: new Map(),  // songId -> custom album art data URL (uploaded from device), see loadUserData
   embeddedArt: new Map(), // songId -> the song file's own cover art, extracted from its tag (see loadUserData / loadMetadataProgressively)
+  lyricRefs: new Map(),  // "folder/song" (lower-case, no extension) -> File / FileSystemFileHandle of a sidecar .lrc/.txt
+  unplayableIds: new Set(), // loop guard for handleUnplayableSong — see there
   externalPlaylists: [], // {id, name, type: "playlist"|"channel"|"search", embedId?, query?} — see parseYouTubeInput
 };
 
@@ -103,6 +115,7 @@ const els = {
   miniPrevBtn: $("#miniPrevBtn"),
   miniNextBtn: $("#miniNextBtn"),
   miniProgressFill: $("#miniProgressFill"),
+  miniProgressBuffered: $("#miniProgressBuffered"),
 
   playerOverlay: $("#playerOverlay"),
   playerCollapseBtn: $("#playerCollapseBtn"),
@@ -115,6 +128,7 @@ const els = {
   playerArtist: $("#playerArtist"),
   playerSourceLabel: $("#playerSourceLabel"),
   seekTrack: $("#seekTrack"),
+  seekBuffered: $("#seekBuffered"),
   seekFill: $("#seekFill"),
   seekHandle: $("#seekHandle"),
   curTime: $("#curTime"),
@@ -130,11 +144,23 @@ const els = {
   favBtn: $("#favBtn"),
   addToPlaylistBtn: $("#addToPlaylistBtn"),
   queueBtn: $("#queueBtn"),
+  lyricsBtn: $("#lyricsBtn"),
+  eqBtn: $("#eqBtn"),
+  eqSidebarBtn: $("#eqSidebarBtn"),
+  lyricsSidebarBtn: $("#lyricsSidebarBtn"),
+  settingsEqBtn: $("#settingsEqBtn"),
+  settingsLyricsBtn: $("#settingsLyricsBtn"),
 
   sheetOverlay: $("#sheetOverlay"),
   queueSheet: $("#queueSheet"),
   closeQueueBtn: $("#closeQueueBtn"),
   queueList: $("#queueList"),
+  rowActionsSheetOverlay: $("#rowActionsSheetOverlay"),
+  rowActionsSheet: $("#rowActionsSheet"),
+  closeRowActionsBtn: $("#closeRowActionsBtn"),
+  rowActionsSongTitle: $("#rowActionsSongTitle"),
+  rowActionsSongArtist: $("#rowActionsSongArtist"),
+  rowActionsList: $("#rowActionsList"),
 
   playlistModalOverlay: $("#playlistModalOverlay"),
   playlistModalTitle: $("#playlistModalTitle"),
@@ -644,14 +670,15 @@ const RageMode = (() => {
     // reliably instead of silently going flat after a mode switch.
     if (sourceConnected) { if (audioCtx && audioCtx.state === "suspended") audioCtx.resume().catch(() => {}); return true; }
     try {
-      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-      const source = audioCtx.createMediaElementSource(audio);
-      analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.75;
+      // The single shared Web Audio graph lives in eq.js (a media element can only
+      // be routed through Web Audio once, and the equalizer needs the same path).
+      // The beat analyser it hands back keeps Rage Mode's original 256-bin / 0.75
+      // settings, so the reactivity is unchanged.
+      const graph = window.VaneEQ && window.VaneEQ.ensureGraph(audio);
+      if (!graph) throw new Error("shared audio graph unavailable");
+      audioCtx = graph.ctx;
+      analyser = graph.beat;
       dataArray = new Uint8Array(analyser.frequencyBinCount);
-      source.connect(analyser);
-      analyser.connect(audioCtx.destination);
       sourceConnected = true;
       if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
     } catch (err) {
@@ -842,7 +869,14 @@ async function requestFolderAccess() {
 }
 
 els.folderFallbackInput.addEventListener("change", async (e) => {
-  const files = Array.from(e.target.files || []).filter(f => AUDIO_EXT.test(f.name));
+  const everything = Array.from(e.target.files || []);
+  state.lyricRefs = new Map();
+  everything.forEach(f => {
+    if (!LYRIC_EXT.test(f.name)) return;
+    const k = lyricKey(f.webkitRelativePath || f.name);
+    if (!state.lyricRefs.has(k) || /\.lrc$/i.test(f.name)) state.lyricRefs.set(k, f);
+  });
+  const files = everything.filter(f => AUDIO_EXT.test(f.name));
   if (!files.length) { toast("No audio files found in that folder."); return; }
   showConnecting("Reading your folder…", "This stays on your device.");
   state.usingFSApi = false;
@@ -895,6 +929,14 @@ function showResumePrompt(handle) {
       toast("Access wasn't granted.");
     }
   };
+  // Safety net: if the browser silently re-grants the same folder later
+  // (tab refocus, bfcache restore) reconnect automatically — no need to
+  // sit on an unclicked "Resume Access" button.
+  window.VV.watchForSilentReconnect(handle, async () => {
+    showConnecting("Welcome back…", "Resuming access to your saved folder.");
+    state.usingFSApi = true;
+    await scanDirectoryHandle(handle);
+  });
 }
 
 /* Recursively walk a FileSystemDirectoryHandle */
@@ -903,6 +945,7 @@ async function scanDirectoryHandle(dirHandle, relPath = "") {
   els.storageLabel.textContent = "Scanning your library…";
   setStorageBusy(true);
   const found = [];
+  state.lyricRefs = new Map();
   async function walk(handle, path) {
     for await (const [name, entry] of handle.entries()) {
       const p = path ? `${path}/${name}` : name;
@@ -911,6 +954,9 @@ async function scanDirectoryHandle(dirHandle, relPath = "") {
       } else if (entry.kind === "file" && AUDIO_EXT.test(name)) {
         found.push({ handle: entry, path: p, folder: path || "Library Root" });
         if (found.length % 15 === 0) setConnectingStatus(`Found ${found.length} songs so far…`, "Still searching your folders.", true);
+      } else if (entry.kind === "file" && LYRIC_EXT.test(name)) {
+        const k = lyricKey(p);
+        if (!state.lyricRefs.has(k) || /\.lrc$/i.test(name)) state.lyricRefs.set(k, entry); // .lrc (synced) beats .txt
       }
     }
   }
@@ -942,8 +988,16 @@ async function buildLibraryFromEntries(entries, isFsApi) {
   const folderMap = new Map();
   state.fileRefs.clear();
 
+  const usedIds = new Set();
   for (const e of entries) {
-    const id = hashStr(e.path);
+    // hashStr is a 32-bit hash: on big libraries two different paths CAN
+    // collide, and two songs sharing an id means every action on one hits
+    // the other. Keep the plain hash (so saved favourites/playlists keep
+    // working) but disambiguate any repeat deterministically.
+    let id = hashStr(e.path);
+    if (usedIds.has(id)) { let n = 2; while (usedIds.has(id + "_" + n)) n++; id = id + "_" + n; }
+    usedIds.add(id);
+    e.id = id;
     const filename = e.path.split("/").pop();
     const { artist, title } = titleCaseFromFilename(filename);
     const album = e.folder.split("/").pop() || "Unknown Album";
@@ -953,6 +1007,7 @@ async function buildLibraryFromEntries(entries, isFsApi) {
       artist: artist || "Unknown Artist",
       album,
       folder: e.folder,
+      relPath: e.path,      // used to pair the song with a sidecar .lrc/.txt
       ext: (filename.split(".").pop() || "").toLowerCase(),
       size: 0,
       duration: 0,
@@ -985,7 +1040,7 @@ async function loadMetadataProgressively(entries, isFsApi) {
     while (idx < entries.length) {
       const myIdx = idx++;
       const e = entries[myIdx];
-      const id = hashStr(e.path);
+      const id = e.id || hashStr(e.path);
       try {
         const file = isFsApi ? await e.handle.getFile() : e.handle;
         const song = state.songs.find(s => s.id === id);
@@ -1001,7 +1056,7 @@ async function loadMetadataProgressively(entries, isFsApi) {
         els.storageLabel.textContent = done < entries.length
           ? `Reading ${done}/${entries.length}…`
           : `${state.songs.length} song${state.songs.length === 1 ? "" : "s"} in your library`;
-        render();
+        if (done < entries.length) scheduleRender(); // throttled + never under a press
       }
     }
   }
@@ -1009,6 +1064,8 @@ async function loadMetadataProgressively(entries, isFsApi) {
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
   els.storageLabel.textContent = `${state.songs.length} song${state.songs.length === 1 ? "" : "s"} in your library`;
   setStorageBusy(false);
+  clearTimeout(scheduledRenderTimer); scheduledRenderTimer = null;
+  render(); // final pass with every duration/art now known
   updateNavCounts();
 }
 
@@ -1447,6 +1504,99 @@ function filterSongs(list) {
 function visibleSongs(list) { return sortSongs(filterSongs(list)); }
 
 /* ---------------------------------------------------------------------
+   Keyed DOM patching for the list views.
+
+   Every view used to be rebuilt with `el.innerHTML = …`, which destroys
+   and recreates EVERY row on every render — and render() runs a lot
+   (each favourite toggle, each track change, and every 12 files while the
+   library's metadata loads in the background). Rebuilding under the
+   user's finger meant a tap that started on one ⋮ button and ended on its
+   freshly created twin never produced a `click` at all, the row under the
+   pointer lost hover/focus, and big libraries did a full re-layout each
+   time. patchChildren() instead keeps every row whose markup is unchanged
+   (matched by song id), replaces only rows that actually changed, and
+   restores keyboard focus if the focused node had to be replaced.
+   --------------------------------------------------------------------- */
+const _innerHTMLDesc = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+function rowKey(node) {
+  return node.nodeType === 1 && node.classList.contains("song-row") && node.dataset.id ? "row:" + node.dataset.id : null;
+}
+function describeFocus(parent) {
+  const ae = document.activeElement;
+  if (!ae || ae === document.body || !parent.contains(ae)) return null;
+  const row = ae.closest(".song-row");
+  return {
+    rowId: row ? row.dataset.id : null,
+    isRow: ae === row,
+    cls: ae.classList && ae.classList.contains("row-menu-btn") ? "row-menu-btn" : null,
+    id: ae.id || null,
+    action: ae.dataset ? ae.dataset.action || null : null,
+  };
+}
+function restoreFocus(parent, f) {
+  if (!f) return;
+  const ae = document.activeElement;
+  if (ae && ae !== document.body && parent.contains(ae)) return; // still focused — nothing to do
+  let target = null;
+  if (f.id) target = parent.querySelector("#" + CSS.escape(f.id));
+  else if (f.rowId) {
+    const row = parent.querySelector('.song-row[data-id="' + CSS.escape(f.rowId) + '"]');
+    if (row) target = f.isRow ? row : (f.cls ? row.querySelector("." + f.cls) : null);
+  }
+  if (target) target.focus({ preventScroll: true });
+}
+function patchChildren(parent, html) {
+  const focus = describeFocus(parent);
+  const tpl = document.createElement("template");
+  tpl.innerHTML = html;
+  const next = Array.from(tpl.content.childNodes);
+  const cur = Array.from(parent.childNodes);
+  const oldByKey = new Map(), oldPlain = [];
+  for (const n of cur) { const k = rowKey(n); if (k) oldByKey.set(k, n); else oldPlain.push(n); }
+  let plainIdx = 0;
+  const finalNodes = next.map((n) => {
+    const k = rowKey(n);
+    let old = null;
+    if (k) { old = oldByKey.get(k) || null; if (old) oldByKey.delete(k); }
+    else old = oldPlain[plainIdx++] || null;
+    return old && old.isEqualNode(n) ? old : n; // unchanged → keep the live node untouched
+  });
+  const keep = new Set(finalNodes);
+  for (const n of cur) if (!keep.has(n)) parent.removeChild(n);
+  let cursor = parent.firstChild;
+  for (const n of finalNodes) {
+    if (n === cursor) cursor = cursor.nextSibling;
+    else parent.insertBefore(n, cursor);
+  }
+  restoreFocus(parent, focus);
+}
+[els.viewSongs, els.viewPlaylists, els.viewPlaylistDetail, els.viewFolders, els.viewFolderDetail, els.viewFavorites, els.viewRecent, els.viewExternal]
+  .forEach((el) => Object.defineProperty(el, "innerHTML", {
+    configurable: true,
+    get() { return _innerHTMLDesc.get.call(this); },
+    set(html) { patchChildren(this, String(html)); },
+  }));
+
+/* Tracks a press in progress so background re-renders can wait it out. */
+let pointerIsDownAt = 0;
+document.addEventListener("pointerdown", () => { pointerIsDownAt = Date.now(); }, true);
+["pointerup", "pointercancel", "dragend"].forEach((t) => document.addEventListener(t, () => { pointerIsDownAt = 0; }, true));
+window.addEventListener("blur", () => { pointerIsDownAt = 0; });
+/** Coalesced render for background/progress updates (metadata loading):
+ *  at most one rebuild per `minGap` ms, and never while a finger/mouse is
+ *  mid-press (capped at 1.5s so a lost pointerup can't stall it). */
+let scheduledRenderTimer = null, lastRenderAt = 0;
+function scheduleRender(minGap = 450) {
+  if (scheduledRenderTimer) return;
+  const run = () => {
+    if (pointerIsDownAt && Date.now() - pointerIsDownAt < 1500) { scheduledRenderTimer = setTimeout(run, 120); return; }
+    scheduledRenderTimer = null;
+    render();
+  };
+  scheduledRenderTimer = setTimeout(run, Math.max(0, minGap - (performance.now() - lastRenderAt)));
+}
+
+/* ---------------------------------------------------------------------
    Rendering
    --------------------------------------------------------------------- */
 function songRowHtml(song, index, opts = {}) {
@@ -1465,13 +1615,8 @@ function songRowHtml(song, index, opts = {}) {
     </div>
     <span class="dur">${song.duration ? fmtTime(song.duration) : ""}</span>
     ${selecting ? "" : `<div class="row-actions">
-      <button class="fav-btn ${fav ? "active" : ""}" data-action="fav" data-id="${song.id}" title="Favorite">
-        <svg viewBox="0 0 24 24" fill="${fav ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 000-7.8z"/></svg>
-      </button>
-      <button class="queue-btn" data-action="queue" data-id="${song.id}" title="Play next">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h9M4 12h9M4 18h9M17 6v12m0 0l-3-3m3 3l3-3"/></svg>
-      </button>
-      <button class="more-btn" data-action="more" data-id="${song.id}" title="Add to playlist">
+      <button class="row-menu-btn" data-action="row-menu" data-id="${song.id}" title="Song actions">
+        ${fav ? `<span class="fav-dot" title="Favorited"></span>` : ""}
         <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
       </button>
     </div>`}
@@ -1635,17 +1780,9 @@ function playlistRowHtml(song, index, playlistId) {
     </div>
     <span class="dur">${song.duration ? fmtTime(song.duration) : ""}</span>
     ${selecting ? "" : `<div class="row-actions">
-      <button class="fav-btn ${fav ? "active" : ""}" data-action="fav" data-id="${song.id}" title="Favorite">
-        <svg viewBox="0 0 24 24" fill="${fav ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 000-7.8z"/></svg>
-      </button>
-      <button class="queue-btn" data-action="queue" data-id="${song.id}" title="Play next">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h9M4 12h9M4 18h9M17 6v12m0 0l-3-3m3 3l3-3"/></svg>
-      </button>
-      <button class="more-btn" data-action="more" data-id="${song.id}" title="Add to playlist">
+      <button class="row-menu-btn" data-action="row-menu" data-id="${song.id}" title="Song actions">
+        ${fav ? `<span class="fav-dot" title="Favorited"></span>` : ""}
         <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
-      </button>
-      <button class="more-btn" data-action="remove-from-playlist" data-id="${song.id}" data-playlist="${playlistId}" title="Remove from this playlist">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
     </div>`}
   </div>`;
@@ -1724,10 +1861,17 @@ function updateNavCounts() {
 }
 
 function render() {
+  lastRenderAt = performance.now();
   updateNavCounts();
   const v = state.currentView;
-  [els.viewSongs, els.viewPlaylists, els.viewPlaylistDetail, els.viewFolders, els.viewFolderDetail, els.viewFavorites, els.viewRecent, els.viewExternal]
-    .forEach(el => el.classList.add("hidden"));
+  // Hide only the views that AREN'T current. Hiding all eight and then
+  // un-hiding one collapses the scroller's height for a moment, and any
+  // layout that lands in between clamps scrollTop to 0 — the list would
+  // jump to the top after an action on a song lower down.
+  const viewByName = { songs: els.viewSongs, playlists: els.viewPlaylists, "playlist-detail": els.viewPlaylistDetail, folders: els.viewFolders,
+    "folder-detail": els.viewFolderDetail, favorites: els.viewFavorites, recent: els.viewRecent, external: els.viewExternal };
+  Object.entries(viewByName).forEach(([name, el]) => { if (name !== v) el.classList.add("hidden"); });
+  const keepScroll = els.contentScroll.scrollTop;
 
   if (v === "songs") { els.viewSongs.classList.remove("hidden"); renderSongsView(); els.viewTitle.textContent = "Library"; }
   else if (v === "playlists") { els.viewPlaylists.classList.remove("hidden"); renderPlaylistsView(); els.viewTitle.textContent = "Playlists"; }
@@ -1738,7 +1882,7 @@ function render() {
   else if (v === "recent") { els.viewRecent.classList.remove("hidden"); renderRecentView(); els.viewTitle.textContent = "Recently Played"; }
   else if (v === "external") { els.viewExternal.classList.remove("hidden"); renderExternalView(); els.viewTitle.textContent = "External Playlists"; }
 
-  els.contentScroll.scrollTop = render._lastView === v ? els.contentScroll.scrollTop : 0;
+  els.contentScroll.scrollTop = render._lastView === v ? keepScroll : 0;
   render._lastView = v;
 }
 
@@ -1777,8 +1921,12 @@ function navigateTo(view) {
 async function getFileForSong(songId) {
   const ref = state.fileRefs.get(songId);
   if (!ref) return null;
-  if (state.usingFSApi && ref.getFile) return await ref.getFile();
-  return ref; // already a File
+  const file = state.usingFSApi && ref.getFile ? await ref.getFile() : ref; // already a File otherwise
+  const song = state.songs.find(s => s.id === songId);
+  // Re-wrap with the correct MIME type — File.type is frequently blank or
+  // wrong for anything past mp3/m4a/wav (see AUDIO_MIME_BY_EXT in shared.js),
+  // which can make a browser refuse a file its decoder could actually play.
+  return song ? typedBlob(file, song.ext, AUDIO_MIME_BY_EXT) : file;
 }
 
 async function playSongId(songId, queueList) {
@@ -1816,6 +1964,13 @@ function addToQueueNext(songId) {
   }
   // If it's already queued somewhere, relocate it rather than duplicate it.
   const existingIndex = state.queue.indexOf(songId);
+  // …but if it IS the current song, there's nothing to move. Relocating it
+  // used to splice the playing track out from under the audio: queueIndex
+  // then pointed at a different song than the one audible.
+  if (existingIndex !== -1 && existingIndex === state.queueIndex) {
+    toast(`"${song.title}" is already playing`);
+    return;
+  }
   if (existingIndex !== -1) {
     state.queue.splice(existingIndex, 1);
     if (existingIndex < state.queueIndex) state.queueIndex--; // removing an earlier item shifts the current index down
@@ -1831,15 +1986,23 @@ async function loadAndPlayCurrent() {
   if (!song) return;
   const file = await getFileForSong(songId);
   if (!file) { toast("Couldn't read that file."); return; }
+  // Ask up front rather than waiting on a play()/error round-trip: if the browser
+  // already knows it has zero support for this container/codec, skip straight to
+  // the same graceful "can't play this, moving on" path instead of stalling on it.
+  const mime = AUDIO_MIME_BY_EXT[song.ext];
+  if (mime && audio.canPlayType(mime) === "") { handleUnplayableSong(song); return; }
   if (state.objectUrl) URL.revokeObjectURL(state.objectUrl);
   state.objectUrl = URL.createObjectURL(file);
   const myLoadToken = ++audioLoadToken; // guards against a stale play()/error firing after a newer track has already started loading
   audio.src = state.objectUrl;
+  if (window.VaneLyrics) window.VaneLyrics.songChanged();
+  resetBufferedUI(); // otherwise the new track would start with the *previous* song's "fully loaded" bar still showing, until the first progress/loadedmetadata event corrects it
   RageMode.ensureAudioGraph();
   try {
     await audio.play();
     if (myLoadToken !== audioLoadToken) return;
     state.isPlaying = true;
+    state.unplayableIds.clear();
   } catch (err) {
     if (myLoadToken !== audioLoadToken) return;
     state.isPlaying = false;
@@ -1863,6 +2026,23 @@ let audioLoadToken = 0;
  *  on automatically instead of stalling the queue. */
 function handleUnplayableSong(song) {
   toast(`Can't play "${song.title}" — unsupported audio format on this device.`, 3200);
+  // Loop guard: with Repeat: All (or a queue that's entirely unsupported formats),
+  // naively auto-skipping forever would just cycle the whole queue endlessly,
+  // re-toasting every ~500ms. Track *which* songs in the CURRENT queue have
+  // failed (self-healing if the queue itself changed since the last failure —
+  // stale ids from a previous, unrelated queue are dropped here rather than
+  // counted against this one) and stop once every unique song in it has been
+  // tried, saying so plainly instead of leaving the person guessing why
+  // playback quietly gave up.
+  state.unplayableIds = new Set([...state.unplayableIds].filter(id => state.queue.includes(id)));
+  state.unplayableIds.add(song.id);
+  const uniqueInQueue = new Set(state.queue).size;
+  if (state.unplayableIds.size >= uniqueInQueue) {
+    state.unplayableIds.clear();
+    setPlayIcon(false);
+    if (uniqueInQueue > 1) toast("None of the songs in this queue could play on this device.", 3600);
+    return;
+  }
   if (state.queue.length > 1) setTimeout(() => nextSong(true), 500);
 }
 
@@ -2056,7 +2236,50 @@ audio.addEventListener("timeupdate", () => {
   els.miniProgressFill.style.width = pct + "%";
   els.curTime.textContent = fmtTime(audio.currentTime);
   els.totalTime.textContent = fmtTime(audio.duration);
+  updateBufferedUI(); // cheap enough to run every tick, and "progress" alone fires too sparsely on some browsers to feel live
 });
+
+/* ---------------------------------------------------------------------
+   Buffered/loading indicator — the seek bar shows two variables at
+   once: .seek-fill (solid, on top) is how far PLAYBACK has reached;
+   .seek-buffered (softer, underneath — same for the mini player's
+   .mini-progress-buffered) is how much of the file has actually
+   finished LOADING, which for anything but a tiny file is a real,
+   separate number worth showing rather than just implying "it's all
+   here" the instant a track starts playing.
+   --------------------------------------------------------------------- */
+/** Reads the browser's own record of what's been downloaded/decoded so
+ *  far (audio.buffered — a list of disjoint time ranges, since a seek
+ *  can leave a gap between what was already loaded and what's loading
+ *  now) and reports how far the range covering — or nearest to — the
+ *  playhead actually reaches. Marks the bar "loaded" once that reaches
+ *  effectively the full duration, which turns off the shimmer in favor
+ *  of a quiet steady glow (see .seek-buffered.loaded in style.css). */
+function updateBufferedUI() {
+  if (!audio.duration || !isFinite(audio.duration)) return;
+  const ranges = audio.buffered;
+  let end = 0;
+  for (let i = 0; i < ranges.length; i++) {
+    if (audio.currentTime >= ranges.start(i) && audio.currentTime <= ranges.end(i)) { end = ranges.end(i); break; }
+    end = Math.max(end, ranges.end(i));
+  }
+  const pct = Math.min(100, (end / audio.duration) * 100);
+  const fullyLoaded = pct >= 99.9;
+  if (els.seekBuffered) { els.seekBuffered.style.width = pct + "%"; els.seekBuffered.classList.toggle("loaded", fullyLoaded); }
+  if (els.miniProgressBuffered) els.miniProgressBuffered.style.width = pct + "%";
+}
+/** Called right after a new src is assigned, so the bar doesn't sit at
+ *  the PREVIOUS track's (possibly 100%, possibly "loaded"-glowing)
+ *  width for the split second before the new file's first progress/
+ *  loadedmetadata event arrives to correct it. */
+function resetBufferedUI() {
+  if (els.seekBuffered) { els.seekBuffered.style.width = "0%"; els.seekBuffered.classList.remove("loaded"); }
+  if (els.miniProgressBuffered) els.miniProgressBuffered.style.width = "0%";
+}
+audio.addEventListener("progress", updateBufferedUI);
+audio.addEventListener("loadedmetadata", updateBufferedUI);
+audio.addEventListener("canplaythrough", updateBufferedUI); // browsers that report a single, late "fully buffered" range rather than incremental progress ticks still get an accurate final state here
+
 audio.addEventListener("ended", () => nextSong(true));
 audio.addEventListener("play", () => { state.isPlaying = true; setPlayIcon(true); });
 audio.addEventListener("pause", () => { state.isPlaying = false; setPlayIcon(false); });
@@ -2130,6 +2353,74 @@ function openQueue() { renderQueueSheet(); els.sheetOverlay.classList.add("open"
 function closeQueue() { els.sheetOverlay.classList.remove("open"); els.queueSheet.classList.remove("open"); }
 
 /* ---------------------------------------------------------------------
+   Song actions sheet — opened from the single ⋮ per row. See the HTML
+   comment on #rowActionsSheet for why this replaced the old three-icon
+   row-actions cluster.
+   --------------------------------------------------------------------- */
+function rowActionItemHtml({ action, icon, label, active, danger }) {
+  return `<button type="button" class="row-action-item ${active ? "active" : ""} ${danger ? "danger" : ""}" data-action="${action}">
+    <svg viewBox="0 0 24 24" fill="${active && action === "sheet-fav" ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2">${icon}</svg>
+    <span>${label}</span>
+  </button>`;
+}
+function renderRowActionsList() {
+  const song = state.songs.find(s => s.id === state.rowActionsTargetId);
+  if (!song) return;
+  const fav = state.favorites.has(song.id);
+  const items = [
+    rowActionItemHtml({
+      action: "sheet-fav", active: fav,
+      label: fav ? "Remove from Favorites" : "Add to Favorites",
+      icon: `<path d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 000-7.8z"/>`,
+    }),
+    rowActionItemHtml({
+      action: "sheet-queue", label: "Play Next",
+      icon: `<path d="M4 6h9M4 12h9M4 18h9M17 6v12m0 0l-3-3m3 3l3-3"/>`,
+    }),
+    rowActionItemHtml({
+      action: "sheet-playlist", label: "Add to Playlist",
+      icon: `<path d="M12 5v14M5 12h14"/>`,
+    }),
+  ];
+  if (state.rowActionsPlaylistId) {
+    items.push(rowActionItemHtml({
+      action: "sheet-remove-from-playlist", danger: true, label: "Remove from This Playlist",
+      icon: `<path d="M6 6l12 12M18 6L6 18"/>`,
+    }));
+  }
+  els.rowActionsSongTitle.textContent = song.title;
+  els.rowActionsSongArtist.textContent = song.artist;
+  els.rowActionsList.innerHTML = items.join("");
+}
+function openRowActionSheet(songId, playlistId = null) {
+  state.rowActionsTargetId = songId;
+  state.rowActionsPlaylistId = playlistId;
+  renderRowActionsList();
+  els.rowActionsSheetOverlay.classList.add("open");
+  els.rowActionsSheet.classList.add("open");
+  // Keyboard users: move focus into the menu (a closed sheet is now
+  // visibility:hidden, so this only works once .open is set, as above).
+  const first = els.rowActionsList.querySelector("button");
+  if (first) first.focus({ preventScroll: true });
+}
+function closeRowActionSheet() {
+  const openerId = state.rowActionsTargetId;
+  els.rowActionsSheetOverlay.classList.remove("open");
+  els.rowActionsSheet.classList.remove("open");
+  state.rowActionsTargetId = null;
+  state.rowActionsPlaylistId = null;
+  // Hand focus back to the ⋮ that opened the menu (unless another dialog
+  // took over, e.g. the playlist picker), so keyboard users keep their place.
+  if (openerId) requestAnimationFrame(() => {
+    if (document.querySelector(".modal-overlay.open")) return;
+    const ae = document.activeElement;
+    if (ae && ae !== document.body && !els.rowActionsSheet.contains(ae)) return;
+    const btn = els.contentScroll.querySelector('.row-menu-btn[data-id="' + CSS.escape(openerId) + '"]');
+    if (btn) btn.focus({ preventScroll: true });
+  });
+}
+
+/* ---------------------------------------------------------------------
    Add-to-playlist / new-playlist modals
    --------------------------------------------------------------------- */
 function openPlaylistModal(songIdOrIds) {
@@ -2148,9 +2439,15 @@ function openPlaylistModal(songIdOrIds) {
     : `<p style="color:var(--text-muted);font-size:13px;">No playlists yet — create one below.</p>`;
   els.playlistModalOverlay.classList.add("open");
 }
-function closePlaylistModal() { els.playlistModalOverlay.classList.remove("open"); }
+function closePlaylistModal() {
+  els.playlistModalOverlay.classList.remove("open");
+  // The target belongs to THIS picker. It used to survive Close / a finished
+  // add, so the next playlist created from the Playlists tab silently
+  // received the songs from an unrelated earlier "Add to Playlist".
+  state.addToPlaylistTargetId = null;
+}
 function openNewPlaylistModal() {
-  state.playlistModalMode = "create"; state.renameTargetId = null;
+  state.playlistModalMode = "create"; state.renameTargetId = null; state.newPlaylistAddTarget = null;
   els.newPlaylistModalTitle.textContent = "New Playlist";
   els.confirmNewPlaylistBtn.textContent = "Create";
   els.newPlaylistModalOverlay.classList.add("open"); els.newPlaylistInput.value = ""; els.newPlaylistInput.focus();
@@ -2158,12 +2455,22 @@ function openNewPlaylistModal() {
 function openRenamePlaylistModal(playlistId) {
   const pl = state.playlists.find(p => p.id === playlistId);
   if (!pl) return;
-  state.playlistModalMode = "rename"; state.renameTargetId = playlistId;
+  state.playlistModalMode = "rename"; state.renameTargetId = playlistId; state.newPlaylistAddTarget = null;
   els.newPlaylistModalTitle.textContent = "Rename Playlist";
   els.confirmNewPlaylistBtn.textContent = "Save";
   els.newPlaylistModalOverlay.classList.add("open"); els.newPlaylistInput.value = pl.name; els.newPlaylistInput.focus(); els.newPlaylistInput.select();
 }
 function closeNewPlaylistModal() { els.newPlaylistModalOverlay.classList.remove("open"); }
+/** Backing out of "New Playlist": if it was opened from the Add-to-Playlist
+ *  picker, go back to that picker with the same song(s) still targeted;
+ *  either way nothing stays pending. */
+function cancelNewPlaylistModal() {
+  const back = state.newPlaylistAddTarget;
+  const wasRename = state.playlistModalMode === "rename";
+  closeNewPlaylistModal();
+  state.newPlaylistAddTarget = null;
+  if (back && !wasRename) openPlaylistModal(back);
+}
 
 /* ---------------------------------------------------------------------
    Settings modal + theme
@@ -2186,6 +2493,7 @@ function applySettingsToUI() {
   applyOverlayStrength();
   applySongListOverlay();
   RageMode.setActive(state.settings.rageMode);
+  renderCursorGrid();
   renderFontGrid();
   renderThemeGrid();
   renderArtStyleGrid();
@@ -2356,6 +2664,29 @@ function applyAccentColors() {
   if (els.accentColorInput) { els.accentColorInput.value = a; els.accentColorHex.textContent = a.toUpperCase(); }
   if (els.accent2ColorInput) { els.accent2ColorInput.value = a2; els.accent2ColorHex.textContent = a2.toUpperCase(); }
 }
+
+function renderCursorGrid() {
+  const grid = document.getElementById("cursorGrid");
+  if (!grid) return;
+  const current = document.documentElement.getAttribute("data-cursor") || "arrow";
+  const glyphs = {
+    arrow: "➤", sword: "🗡", dragon: "🐉", quill: "🪶",
+    potion: "🧪", needle: "💉", ironfist: "🤜", nighthawk: "🦅",
+    crow: "🐦‍⬛", butterfly: "🦋", spaceship: "🚀", pen: "🖋",
+    rifle: "🔫", snake: "🐍", okhand: "👌", flip: "🖕", luck: "🤞",
+  };
+  grid.innerHTML = window.VV.CURSOR_OPTIONS.map(c => `
+    <div class="art-style-option ${current === c.id ? "active" : ""}" data-cursor-id="${c.id}" title="${c.hint}">
+      <span style="font-size:19px;line-height:1;">${glyphs[c.id] || "➤"}</span>
+      <div class="lbl">${c.label}</div>
+    </div>`).join("");
+}
+document.getElementById("cursorGrid").addEventListener("click", async (e) => {
+  const opt = e.target.closest("[data-cursor-id]");
+  if (!opt) return;
+  await window.VV.setCursorStyle(opt.dataset.cursorId);
+  renderCursorGrid();
+});
 
 function renderFontGrid() {
   const grid = document.getElementById("fontGrid");
@@ -2578,7 +2909,7 @@ function applySongListOverlay() {
     els.songListOverlayInput.value = String(v);
   }
 }
-function openSettings() { els.settingsModalOverlay.classList.add("open"); renderFontGrid(); renderThemeGrid(); renderArtStyleGrid(); renderRageBgGrid(); renderRageDripGrid(); }
+function openSettings() { els.settingsModalOverlay.classList.add("open"); renderCursorGrid(); renderFontGrid(); renderThemeGrid(); renderArtStyleGrid(); renderRageBgGrid(); renderRageDripGrid(); }
 function closeSettings() { els.settingsModalOverlay.classList.remove("open"); }
 
 /* ---------------------------------------------------------------------
@@ -2607,7 +2938,25 @@ async function triggerInstall() {
 }
 
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
-  window.addEventListener("load", () => {
+  window.addEventListener("load", async () => {
+    // Self-healing: a service worker from an older deploy can keep serving
+    // its cached (stale) app.js/index.html forever, since it outlives a
+    // normal deploy until something explicitly replaces it — which is
+    // exactly how a bug that's already fixed in the source can still show
+    // up for someone testing in a browser that visited an earlier build.
+    // Rather than requiring a manual DevTools → Unregister every time,
+    // clear out anything left over from a previous version on every load,
+    // then register fresh. (If a real offline-caching sw.js is added later,
+    // this eager wipe should be scoped to a one-time version check instead
+    // of running unconditionally, so it doesn't fight the new cache.)
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+      if (window.caches) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+    } catch (e) { /* best-effort cleanup only — never block the app on this */ }
     navigator.serviceWorker.register("sw.js").catch(() => {});
   });
 }
@@ -2757,14 +3106,14 @@ els.iosModalOverlay.addEventListener("click", (e) => { if (e.target === els.iosM
 
 // Content clicks (delegated) — song rows, folder/playlist cards, action buttons
 els.contentScroll.addEventListener("click", (e) => {
-  const favBtn = e.target.closest('[data-action="fav"]');
-  if (favBtn) { e.stopPropagation(); window.VV.PixieDust.burstFromEl(favBtn); toggleFavorite(favBtn.dataset.id); return; }
-  const queueBtn = e.target.closest('[data-action="queue"]');
-  if (queueBtn) { e.stopPropagation(); window.VV.PixieDust.burstFromEl(queueBtn); addToQueueNext(queueBtn.dataset.id); return; }
-  const moreBtn = e.target.closest('[data-action="more"]');
-  if (moreBtn) { e.stopPropagation(); openPlaylistModal(moreBtn.dataset.id); return; }
-  const rmBtn = e.target.closest('[data-action="remove-from-playlist"]');
-  if (rmBtn) { removeSongFromPlaylist(rmBtn.dataset.playlist, rmBtn.dataset.id); return; }
+  const menuBtn = e.target.closest('[data-action="row-menu"]');
+  if (menuBtn) {
+    e.stopPropagation();
+    window.VV.PixieDust.burstFromEl(menuBtn);
+    const row = menuBtn.closest(".song-row");
+    openRowActionSheet(menuBtn.dataset.id, row ? row.dataset.playlistCtx || null : null);
+    return;
+  }
   const delPl = e.target.closest('[data-action="delete-playlist"]');
   if (delPl) { if (confirm("Delete this playlist?")) deletePlaylist(delPl.dataset.id); return; }
   const renamePl = e.target.closest('[data-action="rename-playlist"]');
@@ -2820,28 +3169,51 @@ els.contentScroll.addEventListener("click", (e) => {
 
   const row = e.target.closest(".song-row");
   if (row) {
-    // Defensive guard: if the click landed on ANY button inside the row
-    // (including ones not explicitly handled above — e.g. a future
-    // addition, or a row-actions button whose specific data-action check
-    // was somehow missed) never fall through to "play this row". A
-    // button click should only ever do what that button says.
+    // Defensive guard: if the click landed on ANY button inside the row,
+    // never fall through to "play this row" — a button click should only
+    // ever do what that button says.
     if (e.target.closest("button")) return;
-    const id = row.dataset.id;
-    if (state.selectMode) { toggleRowSelected(id); return; }
-    window.VV.PixieDust.burstFromEl(row);
-    let queueList;
-    if (state.currentView === "folder-detail") queueList = visibleSongs(state.songs.filter(s => (state.foldersMap.get(state.currentFolder) || []).includes(s.id))).map(s => s.id);
-    else if (state.currentView === "playlist-detail") { const pl = state.playlists.find(p => p.id === state.currentPlaylist); queueList = visibleSongs(pl.songIds.map(sid => state.songs.find(s => s.id === sid)).filter(Boolean)).map(s => s.id); }
-    else if (state.currentView === "favorites") queueList = visibleSongs(state.songs.filter(s => state.favorites.has(s.id))).map(s => s.id);
-    else if (state.currentView === "recent") queueList = visibleSongs(recentlyPlayedSongs()).map(s => s.id);
-    else queueList = visibleSongs(state.songs).map(s => s.id);
-    playSongId(id, queueList);
-    openPlayer();
+    if (state.selectMode) { toggleRowSelected(row.dataset.id); return; }
+    activateSongRow(row);
   }
 });
 
+// Shared by the click handler above and the keydown handler below, so a
+// song row (role="button") behaves the same whether it's clicked or
+// activated from the keyboard.
+function activateSongRow(row) {
+  const id = row.dataset.id;
+  window.VV.PixieDust.burstFromEl(row);
+  let queueList;
+  if (state.currentView === "folder-detail") queueList = visibleSongs(state.songs.filter(s => (state.foldersMap.get(state.currentFolder) || []).includes(s.id))).map(s => s.id);
+  else if (state.currentView === "playlist-detail") { const pl = state.playlists.find(p => p.id === state.currentPlaylist); queueList = visibleSongs(pl.songIds.map(sid => state.songs.find(s => s.id === sid)).filter(Boolean)).map(s => s.id); }
+  else if (state.currentView === "favorites") queueList = visibleSongs(state.songs.filter(s => state.favorites.has(s.id))).map(s => s.id);
+  else if (state.currentView === "recent") queueList = visibleSongs(recentlyPlayedSongs()).map(s => s.id);
+  else queueList = visibleSongs(state.songs).map(s => s.id);
+  playSongId(id, queueList);
+  openPlayer();
+}
+
 // External playlist inputs (re-rendered each time, so listen via delegation)
 els.contentScroll.addEventListener("keydown", (e) => {
+  // .song-row carries role="button" tabindex="0", which only promises
+  // keyboard operability if we actually wire up Enter ourselves — browsers
+  // don't do it for free on non-native buttons. Only fires when the row
+  // itself is focused, not when focus is on one of its nested action
+  // buttons (those already handle their own Enter natively).
+  //
+  // Enter activates the row (play this song, or in select mode toggle its
+  // checkbox) exactly like a click. Space is deliberately not handled at
+  // all here, in select mode or otherwise: Space belongs to the app-wide
+  // play/pause shortcut (see the window keydown handler below) with no
+  // carve-outs, so it means the same thing everywhere in the app, no
+  // matter what's focused or what mode the list is in.
+  if (e.key === "Enter" && e.target.classList.contains("song-row")) {
+    e.preventDefault();
+    if (state.selectMode) { toggleRowSelected(e.target.dataset.id); return; }
+    activateSongRow(e.target);
+    return;
+  }
   if (e.key === "Enter" && (e.target.id === "externalPlaylistInput" || e.target.id === "externalPlaylistNameInput")) {
     e.preventDefault();
     addExternalPlaylist();
@@ -2901,12 +3273,17 @@ els.playlistPickList.addEventListener("click", (e) => {
     closePlaylistModal();
   }
 });
-els.newPlaylistFromModalBtn.addEventListener("click", () => { closePlaylistModal(); openNewPlaylistModal(); });
+els.newPlaylistFromModalBtn.addEventListener("click", () => {
+  const target = state.addToPlaylistTargetId;
+  closePlaylistModal();
+  openNewPlaylistModal();
+  state.newPlaylistAddTarget = target; // only THIS path carries songs into the new playlist
+});
 els.closePlaylistModalBtn.addEventListener("click", closePlaylistModal);
 els.playlistModalOverlay.addEventListener("click", (e) => { if (e.target === els.playlistModalOverlay) closePlaylistModal(); });
 
-els.cancelNewPlaylistBtn.addEventListener("click", closeNewPlaylistModal);
-els.newPlaylistModalOverlay.addEventListener("click", (e) => { if (e.target === els.newPlaylistModalOverlay) closeNewPlaylistModal(); });
+els.cancelNewPlaylistBtn.addEventListener("click", cancelNewPlaylistModal);
+els.newPlaylistModalOverlay.addEventListener("click", (e) => { if (e.target === els.newPlaylistModalOverlay) cancelNewPlaylistModal(); });
 els.confirmNewPlaylistBtn.addEventListener("click", async () => {
   const name = els.newPlaylistInput.value.trim();
   if (!name) { toast("Give it a name first."); return; }
@@ -2915,9 +3292,10 @@ els.confirmNewPlaylistBtn.addEventListener("click", async () => {
     closeNewPlaylistModal();
     return;
   }
+  const target = state.newPlaylistAddTarget; // read BEFORE anything awaits or closes
+  state.newPlaylistAddTarget = null;
   const pl = await createPlaylist(name);
   closeNewPlaylistModal();
-  const target = state.addToPlaylistTargetId;
   if (target) {
     if (Array.isArray(target)) {
       await addSongsToPlaylist(pl.id, target);
@@ -2926,14 +3304,13 @@ els.confirmNewPlaylistBtn.addEventListener("click", async () => {
     } else {
       await addSongToPlaylist(pl.id, target);
     }
-    state.addToPlaylistTargetId = null;
     render();
   }
 });
 els.newPlaylistInput.addEventListener("keydown", (e) => { if (e.key === "Enter") els.confirmNewPlaylistBtn.click(); });
 
 // Mini player
-els.miniPlayer.addEventListener("click", (e) => { if (!e.target.closest("button")) openPlayer(); });
+els.miniPlayer.addEventListener("click", (e) => { if (!e.target.closest("button, .mini-volume")) openPlayer(); });
 els.miniPlayBtn.addEventListener("click", (e) => { e.stopPropagation(); togglePlay(); });
 els.miniPrevBtn.addEventListener("click", (e) => { e.stopPropagation(); prevSong(); });
 els.miniNextBtn.addEventListener("click", (e) => { e.stopPropagation(); nextSong(false); });
@@ -2949,6 +3326,18 @@ els.repeatBtn.addEventListener("click", cycleRepeat);
 els.favBtn.addEventListener("click", () => { const id = state.queue[state.queueIndex]; if (id) toggleFavorite(id); });
 els.addToPlaylistBtn.addEventListener("click", () => { const id = state.queue[state.queueIndex]; if (id) openPlaylistModal(id); });
 els.queueBtn.addEventListener("click", openQueue);
+
+/* Equalizer + Lyrics (eq.js / lyrics.js). Opened from the full player, the
+   sidebar, Settings, or the E / L keys. Settings closes first so the panel
+   isn't fighting the modal for focus. */
+const openEq = (opener) => window.VaneEQ && window.VaneEQ.toggle(opener);
+const openLyrics = (opener) => window.VaneLyrics && window.VaneLyrics.toggle(opener);
+els.eqBtn.addEventListener("click", () => openEq(els.eqBtn));
+els.lyricsBtn.addEventListener("click", () => openLyrics(els.lyricsBtn));
+els.eqSidebarBtn.addEventListener("click", () => openEq(els.eqSidebarBtn));
+els.lyricsSidebarBtn.addEventListener("click", () => openLyrics(els.lyricsSidebarBtn));
+els.settingsEqBtn.addEventListener("click", () => { closeSettings(); openEq(els.settingsBtn); });
+els.settingsLyricsBtn.addEventListener("click", () => { closeSettings(); openLyrics(els.settingsBtn); });
 
 /* Custom album art — pick a photo from device storage for the song
    currently open in the full player. Any resolution/aspect ratio goes
@@ -3020,14 +3409,158 @@ els.queueList.addEventListener("click", (e) => {
     return;
   }
   const row = e.target.closest(".song-row");
-  if (row) { state.queueIndex = Number(row.dataset.queueIndex); loadAndPlayCurrent(); closeQueue(); }
+  if (row) {
+    if (e.target.closest("button")) return; // don't jump-and-play when the remove button was tapped
+    state.queueIndex = Number(row.dataset.queueIndex); loadAndPlayCurrent(); closeQueue();
+  }
 });
 
+els.closeRowActionsBtn.addEventListener("click", closeRowActionSheet);
+els.rowActionsSheetOverlay.addEventListener("click", closeRowActionSheet);
+els.rowActionsList.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-action]");
+  if (!btn) return;
+  const songId = state.rowActionsTargetId;
+  if (!songId) return;
+  if (btn.dataset.action === "sheet-fav") {
+    toggleFavorite(songId);
+    renderRowActionsList(); // reflect the new state immediately without closing the sheet
+    const again = els.rowActionsList.querySelector('[data-action="sheet-fav"]');
+    if (again) again.focus({ preventScroll: true }); // the list was rebuilt — keep keyboard focus on the same item
+  } else if (btn.dataset.action === "sheet-queue") {
+    addToQueueNext(songId);
+    closeRowActionSheet();
+  } else if (btn.dataset.action === "sheet-playlist") {
+    closeRowActionSheet();
+    openPlaylistModal(songId);
+  } else if (btn.dataset.action === "sheet-remove-from-playlist") {
+    removeSongFromPlaylist(state.rowActionsPlaylistId, songId);
+    closeRowActionSheet();
+  }
+});
+
+/* ---------------------------------------------------------------------
+   Volume control — one controller drives the mini-player slider, the
+   full-player slider, the mute buttons, and the keyboard shortcuts, so
+   they can never disagree. Remembered between visits (not the mute flag).
+   --------------------------------------------------------------------- */
+const volume = createVolumeController(audio, { storageKey: "volume-audio", step: 5 });
+const volUI = {
+  sliders: [$("#volSlider"), $("#miniVolSlider")],
+  buttons: [$("#muteBtn"), $("#miniMuteBtn")],
+  icons: [$("#volIcon"), $("#miniVolIcon")],
+  value: $("#volValue"),
+  groups: [$("#playerVolume"), $("#miniVolume")],
+};
+volume.subscribe((v) => {
+  volUI.sliders.forEach(sl => {
+    sl.value = v.level;
+    sl.style.setProperty("--vol-pct", v.level + "%");
+    sl.setAttribute("aria-valuetext", v.muted ? "Muted" : v.volume + " percent");
+  });
+  volUI.icons.forEach(ic => { ic.innerHTML = volumeIconMarkup(v.level); });
+  volUI.buttons.forEach(b => b.classList.toggle("muted", v.level === 0));
+  volUI.value.textContent = v.muted ? "Muted" : v.volume + "%";
+  volUI.groups.forEach(g => g.classList.toggle("no-volume-slider", !v.supported));
+});
+volUI.sliders.forEach(sl => sl.addEventListener("input", () => volume.set(Number(sl.value))));
+volUI.buttons.forEach(b => b.addEventListener("click", (e) => { e.stopPropagation(); volume.toggleMute(); }));
+function volumeToast() {
+  const v = volume.state;
+  return v.muted ? "🔇 Muted" : v.volume === 0 ? "🔇 Volume 0%" : `🔊 Volume ${v.volume}%`;
+}
+
+/* ---------------------------------------------------------------------
+   Keyboard shortcuts — this map is what Settings → Keyboard Shortcuts
+   shows (catalog: SHORTCUTS.audio in shared.js). Keep the two in sync.
+     Space          play / pause          M          mute / unmute
+     Shift + ↑ / ↓  volume ±5%            S          shuffle on / off
+     ← / →          seek ∓5s              R          repeat off → all → one
+     Shift + ← / →  previous / next song   L          lyrics view
+                                           E          equalizer
+   Plain arrows are deliberately NOT used for volume: they scroll the
+   library list, and the app already reserved Shift+Arrow for track skip.
+   --------------------------------------------------------------------- */
+function isTypingTarget(t) {
+  if (!(t instanceof window.Element)) return false;
+  if (t.isContentEditable || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return true;
+  if (t.tagName !== "INPUT") return false;
+  return !["range", "checkbox", "radio", "button", "submit", "reset", "color", "file"].includes((t.type || "").toLowerCase());
+}
 window.addEventListener("keydown", (e) => {
-  if (e.target.tagName === "INPUT") return;
-  if (e.code === "Space") { e.preventDefault(); togglePlay(); }
-  else if (e.code === "ArrowRight" && e.shiftKey) nextSong(false);
-  else if (e.code === "ArrowLeft" && e.shiftKey) prevSong();
+  if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return; // never steal browser/OS combos (Ctrl+R, Cmd+S…)
+  const t = e.target;
+  if (isTypingTarget(t)) return;
+  const key = e.key;
+  const isRange = t instanceof window.Element && t.tagName === "INPUT" && t.type === "range";
+  const isVolSlider = isRange && t.classList.contains("vol-slider");
+
+  // Space — the app-wide play/pause toggle, unconditionally. It has to
+  // keep meaning "play/pause" no matter what state the app is in or what
+  // last had keyboard focus: a settings/playlist/queue sheet open, a
+  // song row still focused from the last click, a button focused after
+  // tabbing through the toolbar, mid-scroll, right after a song
+  // finished — all of it. isTypingTarget (above) is the ONLY carve-out:
+  // if you're actually typing into a text field, Space types a space.
+  // Everywhere else it's play/pause, full stop — no exception for
+  // buttons or links either, same as Space works in every other media
+  // player (YouTube, Spotify, SoundCloud). Nothing upstream of this
+  // handler is allowed to consume Space for its own purpose anymore
+  // (see the contentScroll handler above, which used to and was the
+  // actual bug: focus a song row and Space stopped toggling playback).
+  if (e.code === "Space") {
+    if (e.repeat) return;
+    e.preventDefault(); togglePlay();
+    return;
+  }
+
+  if (key === "ArrowUp" || key === "ArrowDown" || key === "ArrowLeft" || key === "ArrowRight") {
+    if (isRange && !(isVolSlider && e.shiftKey && (key === "ArrowUp" || key === "ArrowDown"))) return; // sliders keep their own arrow keys
+    if ((key === "ArrowLeft" || key === "ArrowRight") && els.themeCarouselOverlay.classList.contains("open")) return; // carousel owns these
+    if (e.shiftKey && (key === "ArrowUp" || key === "ArrowDown")) {
+      e.preventDefault();
+      if (!volume.supported) { toast("Volume is controlled by your device's buttons in this browser.", 2800); return; }
+      volume.nudge(key === "ArrowUp" ? 1 : -1);
+      toast(volumeToast(), 1100);
+    } else if (e.shiftKey && key === "ArrowRight") { if (!e.repeat) nextSong(false); }
+    else if (e.shiftKey && key === "ArrowLeft") { if (!e.repeat) prevSong(); }
+    else if (!e.shiftKey && (key === "ArrowLeft" || key === "ArrowRight")) {
+      if (!audio.src || !isFinite(audio.duration)) return;
+      e.preventDefault();
+      audio.currentTime = Math.max(0, Math.min(audio.duration, audio.currentTime + (key === "ArrowRight" ? 5 : -5)));
+    }
+    return;
+  }
+
+  if (e.shiftKey || e.repeat) return;
+  // The letter shortcuts act on the player/library underneath, so they
+  // must not leak through while a modal or sheet sits on top of it —
+  // pressing "s" to type inside the New Playlist naming field shouldn't
+  // also toggle Shuffle behind the dialog. Space is deliberately exempt
+  // (handled above, before this guard) — see its own comment for why.
+  const blockingOverlays = [els.newPlaylistModalOverlay, els.playlistModalOverlay, els.rowActionsSheet, els.queueSheet, els.settingsModalOverlay];
+  if (blockingOverlays.some(el => el && el.classList.contains("open"))) return;
+  const k = key.toLowerCase();
+  if (k === "m") { e.preventDefault(); volume.toggleMute(); toast(volumeToast(), 1100); }
+  else if (k === "s") { e.preventDefault(); toggleShuffle(); toast(state.shuffle ? "🔀 Shuffle on" : "Shuffle off", 1100); }
+  else if (k === "l") { e.preventDefault(); openLyrics(); }
+  else if (k === "e") { e.preventDefault(); openEq(); }
+  else if (k === "r") { e.preventDefault(); cycleRepeat(); toast(state.repeat === "one" ? "🔂 Repeat one" : state.repeat === "all" ? "🔁 Repeat all" : "Repeat off", 1100); }
+});
+
+// Escape closes whichever sheet/modal is currently open, innermost first —
+// the theme carousel has its own Escape handling above (it also needs
+// ArrowLeft/Right while open), everything else funnels through here so
+// every overlay in the app is dismissable from the keyboard, not just
+// by clicking its backdrop.
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (els.newPlaylistModalOverlay.classList.contains("open")) cancelNewPlaylistModal();
+  else if (els.playlistModalOverlay.classList.contains("open")) closePlaylistModal();
+  else if (els.rowActionsSheet.classList.contains("open")) closeRowActionSheet();
+  else if (els.queueSheet.classList.contains("open")) closeQueue();
+  else if (els.settingsModalOverlay.classList.contains("open")) closeSettings();
+  else if (els.playerOverlay.classList.contains("open")) closePlayer();
 });
 
 window.addEventListener("resize", () => {
@@ -3037,9 +3570,38 @@ window.addEventListener("resize", () => {
 });
 
 /* ---------------------------------------------------------------------
+   Equalizer + Lyrics bridge — the two modules are separate files and this
+   file is a closure, so hand them exactly what they need and nothing more.
+   --------------------------------------------------------------------- */
+function currentSong() { return state.songs.find(s => s.id === state.queue[state.queueIndex]) || null; }
+async function getLyricFileForSong(songId) {
+  const song = state.songs.find(s => s.id === songId);
+  if (!song || !song.relPath) return null;
+  const ref = state.lyricRefs.get(lyricKey(song.relPath));
+  if (!ref) return null;
+  return ref.getFile ? await ref.getFile() : ref;
+}
+window.VaneEQ.attach(audio).then(() => {
+  window.VaneEQ.subscribe((snap) => {
+    els.eqBtn.classList.toggle("active", snap.engaged);
+    els.eqBtn.title = snap.engaged ? "Equalizer — on (E)" : "Equalizer (E)";
+  });
+});
+window.VaneLyrics.init({
+  audio, toast,
+  getSong: currentSong,
+  getFile: getFileForSong,
+  getLyricFile: getLyricFileForSong,
+  art: (song) => resolveArtUrl(song),
+  togglePlay, next: () => nextSong(false), prev: prevSong,
+});
+
+/* ---------------------------------------------------------------------
    Boot
    --------------------------------------------------------------------- */
 async function boot() {
+  renderShortcutList($("#shortcutList"), "audio", $("#shortcutNote"));
+  volume.load();
   await loadUserData();
   if (fsApiSupported()) {
     els.fsApiNote.textContent = "Your browser will remember this folder next time you open the app.";
