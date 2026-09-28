@@ -306,6 +306,7 @@ button:active, .nav-item:active, .tabbar button:active,
 }
 .sidebar-btn:hover { border-color: var(--accent-dark); color: var(--accent); background: var(--accent-dim); }
 .sidebar-btn svg { width: 15px; height: 15px; }
+.sidebar-backdrop { display: none; }
 
 /* ---------- Main column ---------- */
 .main {
@@ -338,6 +339,7 @@ button:active, .nav-item:active, .tabbar button:active,
   border: 1px solid var(--divider); background: var(--ripple); color: var(--text-secondary); transition: all .2s; flex: none;
 }
 .icon-btn:hover { color: var(--accent); border-color: var(--accent-dark); background: var(--accent-dim); }
+.mobile-menu-btn, .sidebar-close-btn { display: none; }
 .icon-btn svg { width: 16px; height: 16px; }
 
 .sort-select {
@@ -1000,9 +1002,31 @@ button:active, .nav-item:active, .tabbar button:active,
    RESPONSIVE
    ===================================================================== */
 
-/* Phone: hide sidebar, show bottom tab bar, single column */
+/* Phone: sidebar becomes an off-canvas drawer opened by the hamburger
+   button, bottom tab bar handles the everyday views, single column */
 @media (max-width: 899px) {
-  .sidebar { display: none; }
+  .mobile-menu-btn { display: flex; }
+  .sidebar {
+    position: fixed; top: 0; left: 0; z-index: 70;
+    width: min(300px, 84vw); height: 100dvh; max-width: none;
+    transform: translateX(-100%);
+    transition: transform .3s cubic-bezier(.4, 0, .2, 1);
+    box-shadow: 8px 0 32px rgba(0, 0, 0, .5);
+    padding-bottom: calc(18px + var(--safe-bottom));
+    overflow-y: auto;
+  }
+  .sidebar.open { transform: translateX(0); }
+  .sidebar-close-btn {
+    display: flex; position: absolute; top: calc(12px + var(--safe-top)); right: 12px; z-index: 2;
+    width: 32px; height: 32px; align-items: center; justify-content: center;
+    border-radius: 999px; border: 1px solid var(--divider); background: var(--ripple); color: var(--text-secondary);
+  }
+  .sidebar-close-btn svg { width: 15px; height: 15px; }
+  .sidebar-backdrop {
+    position: fixed; inset: 0; z-index: 65; background: rgba(0, 0, 0, .55);
+    opacity: 0; pointer-events: none; transition: opacity .3s ease;
+  }
+  .sidebar-backdrop.open { display: block; opacity: 1; pointer-events: auto; }
   .mini-player.with-sidebar { left: 0; }
   .mini-player { bottom: calc(56px + var(--safe-bottom)); }
   .tabbar {
@@ -1022,17 +1046,25 @@ button:active, .nav-item:active, .tabbar button:active,
   .card-grid { grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 12px; }
 }
 
-/* Tablet+ : sidebar visible, no tab bar */
+/* Tablet+ : sidebar is the always-visible column again, hamburger/drawer
+   are phone-only, so make sure neither can linger open under the fingers
+   of someone who resized or rotated out of phone width. */
 @media (min-width: 900px) {
   .tabbar { display: none; }
+  .mobile-menu-btn, .sidebar-close-btn, .sidebar-backdrop { display: none; }
+  .sidebar { position: static; transform: none; box-shadow: none; height: auto; }
 }
 
-/* Small phones */
+/* Very small / narrow phones: trim the drawer and topbar controls further
+   so nothing overlaps or clips at the smallest widths this ships to. */
 @media (max-width: 380px) {
   :root { --nav-w: 210px; }
   .player-meta .title { font-size: 19px; }
   .pc-play { width: 60px; height: 60px; }
   .pc-skip { width: 44px; height: 44px; }
+  .sidebar { width: min(268px, 88vw); }
+  .topbar { gap: 6px; padding-left: 10px; padding-right: 10px; }
+  .search-wrap { padding: 8px 10px; min-width: 0; }
 }
 
 /* Large laptop/desktop: constrain content width, roomier player */

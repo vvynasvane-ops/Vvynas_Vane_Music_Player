@@ -82,6 +82,9 @@ const els = {
   grantAccessBtn: $("#grantAccessBtn"),
   fsApiNote: $("#fsApiNote"),
   sidebar: $("#sidebar"),
+  sidebarBackdrop: $("#sidebarBackdrop"),
+  sidebarCloseBtn: $("#sidebarCloseBtn"),
+  mobileMenuBtn: $("#mobileMenuBtn"),
   navItems: $$(".nav-item"),
   tabbarBtns: $$(".tabbar button"),
   tabbar: $("#tabbar"),
@@ -1719,28 +1722,35 @@ function renderFolderDetail(folderPath) {
 
 function renderPlaylistsView() {
   const recentCount = state.recentlyPlayed.length;
+  const q = state.search.trim().toLowerCase();
+  const showRecent = !q || "recently played".includes(q);
+  const showExternal = !q || "external playlists".includes(q);
+  const matched = q ? state.playlists.filter(pl => pl.name.toLowerCase().includes(q)) : state.playlists;
+  const noHits = q && !showRecent && !showExternal && !matched.length;
   els.viewPlaylists.innerHTML = `<div class="card-grid">
-    <div class="playlist-card new-playlist-card" id="newPlaylistCard">
+    ${q ? "" : `<div class="playlist-card new-playlist-card" id="newPlaylistCard">
       <div class="art"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 5v14M5 12h14"/></svg></div>
       <div class="name">New Playlist</div>
-    </div>
-    <div class="playlist-card recent-card" data-view-jump="recent">
+    </div>`}
+    ${showRecent ? `<div class="playlist-card recent-card" data-view-jump="recent">
       <div class="art"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg></div>
       <div class="name">Recently Played</div>
       <div class="n">${recentCount} song${recentCount === 1 ? "" : "s"}</div>
-    </div>
-    <div class="playlist-card external-card-link" data-view-jump="external">
+    </div>` : ""}
+    ${showExternal ? `<div class="playlist-card external-card-link" data-view-jump="external">
       <div class="art"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M15 10l4.55-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.45.894L15 14M5 6h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2z"/></svg></div>
       <div class="name">External Playlists</div>
       <div class="n">${state.externalPlaylists.length ? state.externalPlaylists.length + " connected" : "YouTube &amp; more"}</div>
-    </div>
-    ${state.playlists.map(pl => `
+    </div>` : ""}
+    ${matched.map(pl => `
     <div class="playlist-card" data-playlist="${pl.id}">
       <div class="art"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6h16M4 12h10M4 18h10M18 15v6m3-3h-6"/></svg></div>
       <div class="name">${escapeHtml(pl.name)}</div>
       <div class="n">${pl.songIds.length} song${pl.songIds.length === 1 ? "" : "s"}</div>
     </div>`).join("")}
-  </div>`;
+  </div>
+  ${noHits ? emptyStateHtml("No playlists found", `Nothing named “${escapeHtml(state.search.trim())}” — try a different search.`,
+      '<path d="M4 6h16M4 12h10M4 18h10M18 15v6m3-3h-6"/>') : ""}`;
 }
 
 function renderPlaylistDetail(playlistId) {
@@ -1864,6 +1874,9 @@ function render() {
   lastRenderAt = performance.now();
   updateNavCounts();
   const v = state.currentView;
+  if (els.searchInput && document.activeElement !== els.searchInput) {
+    els.searchInput.placeholder = v === "playlists" ? "Search playlists…" : "Search songs, artists, albums, playlists…";
+  }
   // Hide only the views that AREN'T current. Hiding all eight and then
   // un-hiding one collapses the scroller's height for a moment, and any
   // layout that lands in between clamps scrollTop to 0 — the list would
@@ -1874,8 +1887,7 @@ function render() {
   const keepScroll = els.contentScroll.scrollTop;
 
   if (v === "songs") { els.viewSongs.classList.remove("hidden"); renderSongsView(); els.viewTitle.textContent = "Library"; }
-  else if (v === "playlists") { els.viewPlaylists.classList.remove("hidden"); renderPlaylistsView(); els.viewTitle.textContent = "Playlists"; }
-  else if (v === "playlist-detail") { els.viewPlaylistDetail.classList.remove("hidden"); renderPlaylistDetail(state.currentPlaylist); els.viewTitle.textContent = "Playlist"; }
+  else if (v === "playlists") { els.viewPlaylists.classList.remove("hidden"); renderPlaylistsView(); els.viewTitle.textContent = "Playlists"; }  else if (v === "playlist-detail") { els.viewPlaylistDetail.classList.remove("hidden"); renderPlaylistDetail(state.currentPlaylist); els.viewTitle.textContent = "Playlist"; }
   else if (v === "folders") { els.viewFolders.classList.remove("hidden"); renderFoldersView(); els.viewTitle.textContent = "Folders"; }
   else if (v === "folder-detail") { els.viewFolderDetail.classList.remove("hidden"); renderFolderDetail(state.currentFolder); els.viewTitle.textContent = "Folder"; }
   else if (v === "favorites") { els.viewFavorites.classList.remove("hidden"); renderFavoritesView(); els.viewTitle.textContent = "Favorites"; }
@@ -2673,7 +2685,8 @@ function renderCursorGrid() {
     arrow: "➤", sword: "🗡", dragon: "🐉", quill: "🪶",
     potion: "🧪", needle: "💉", ironfist: "🤜", nighthawk: "🦅",
     crow: "🐦‍⬛", butterfly: "🦋", spaceship: "🚀", pen: "🖋",
-    rifle: "🔫", snake: "🐍", okhand: "👌", flip: "🖕", luck: "🤞",
+    rifle: "🔫", snake: "🐍", paperjet: "✈️",
+    ...Object.fromEntries(Object.entries(window.VV.EMOJI_CURSORS).map(([id, c]) => [id, c.emoji])),
   };
   grid.innerHTML = window.VV.CURSOR_OPTIONS.map(c => `
     <div class="art-style-option ${current === c.id ? "active" : ""}" data-cursor-id="${c.id}" title="${c.hint}">
@@ -2974,6 +2987,35 @@ els.tabbarBtns.forEach(btn => btn.addEventListener("click", () => {
   if (btn.dataset.action === "settings") openSettings();
   else navigateTo(btn.dataset.view);
 }));
+
+/* ---------------------------------------------------------------------
+   Mobile sidebar drawer — under 900px the sidebar (nav, DJ Mode/Video/
+   Recap links, rescan, install, equalizer, lyrics, settings) is off-canvas
+   rather than gone, so nothing that lives there becomes unreachable on a
+   phone. The hamburger button and backdrop toggle it; any actionable tap
+   inside (a nav item, a sidebar button, or a link like DJ Mode) closes the
+   drawer first so the phone lands on what was tapped instead of a menu
+   sitting over it.
+   --------------------------------------------------------------------- */
+function openSidebarDrawer() {
+  els.sidebar.classList.add("open");
+  els.sidebarBackdrop.classList.add("open");
+  els.mobileMenuBtn.setAttribute("aria-expanded", "true");
+}
+function closeSidebarDrawer() {
+  els.sidebar.classList.remove("open");
+  els.sidebarBackdrop.classList.remove("open");
+  els.mobileMenuBtn.setAttribute("aria-expanded", "false");
+}
+els.mobileMenuBtn.addEventListener("click", () => {
+  els.sidebar.classList.contains("open") ? closeSidebarDrawer() : openSidebarDrawer();
+});
+els.sidebarCloseBtn.addEventListener("click", closeSidebarDrawer);
+els.sidebarBackdrop.addEventListener("click", closeSidebarDrawer);
+els.sidebar.addEventListener("click", (e) => {
+  if (window.innerWidth >= 900 || e.target.closest("#sidebarCloseBtn")) return;
+  if (e.target.closest(".nav-item, .sidebar-btn, a")) closeSidebarDrawer();
+});
 
 els.searchInput.addEventListener("input", (e) => { state.search = e.target.value; render(); });
 els.sortSelect.addEventListener("change", (e) => { state.sort = e.target.value; render(); });
@@ -3561,12 +3603,14 @@ window.addEventListener("keydown", (e) => {
   else if (els.queueSheet.classList.contains("open")) closeQueue();
   else if (els.settingsModalOverlay.classList.contains("open")) closeSettings();
   else if (els.playerOverlay.classList.contains("open")) closePlayer();
+  else if (els.sidebar.classList.contains("open")) closeSidebarDrawer();
 });
 
 window.addEventListener("resize", () => {
   const mobile = window.innerWidth < 900;
   const appLoaded = els.appBody && !els.appBody.classList.contains("hidden");
   els.tabbar.classList.toggle("hidden", !mobile || !appLoaded);
+  if (!mobile) closeSidebarDrawer(); // resized/rotated past phone width — drop the off-canvas state
 });
 
 /* ---------------------------------------------------------------------

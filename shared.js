@@ -1796,6 +1796,57 @@ function renderShortcutList(container, env, noteEl) {
    drawing is showing lives entirely in the single --vv-cursor custom
    property on <html>; swapping it is all _setCursorState ever does.
    --------------------------------------------------------------------- */
+/* Emoji-glyph cursors: idle/hover/press art is generated generically from
+   the emoji itself (a soft color-matched glow ring that grows through the
+   click states), so a whole batch can be added as plain data instead of
+   hand-drawn SVGs. Hand-drawn cursors above (sword, dragon, quill, potion,
+   needle, ironfist, nighthawk, crow, butterfly, spaceship, pen, rifle,
+   snake, paperjet) stay bespoke because their silhouette carries the theme;
+   these are the "just show me the emoji, but alive" set. */
+const EMOJI_CURSORS = {
+  okhand:         { emoji: "👌",  glow: "#E8C468", label: "All Good",          hint: "👌" },
+  flip:           { emoji: "🖕",  glow: "#B22222", label: "Not Today",         hint: "🖕" },
+  luck:           { emoji: "🤞",  glow: "#3AA24A", label: "Fingers Crossed",   hint: "🤞" },
+  jet:            { emoji: "✈️", glow: "#8B9CA8", label: "Jet Set",           hint: "✈️" },
+  dove:           { emoji: "🕊️", glow: "#E8E8E8", label: "Dove",              hint: "🕊️" },
+  bolt:           { emoji: "⚡",  glow: "#FFD65C", label: "Lightning",         hint: "⚡" },
+  peace:          { emoji: "✌️", glow: "#3D8FE0", label: "Peace Out",         hint: "✌️" },
+  snowflake:      { emoji: "❄️", glow: "#8ED2FF", label: "Snowflake",         hint: "❄️" },
+  oyster:         { emoji: "🦪",  glow: "#D9B8FF", label: "Oyster",            hint: "🦪" },
+  corn:           { emoji: "🌽",  glow: "#FFD65C", label: "Corn",              hint: "🌽" },
+  champagne:      { emoji: "🍾",  glow: "#3AA24A", label: "Pop Off",           hint: "🍾" },
+  toast:          { emoji: "🥂",  glow: "#FFD65C", label: "Cheers",            hint: "🥂" },
+  beer:           { emoji: "🍺",  glow: "#E8C468", label: "Beer",              hint: "🍺" },
+  wine:           { emoji: "🍷",  glow: "#8A1E3A", label: "Wine",              hint: "🍷" },
+  anchor:         { emoji: "⚓",  glow: "#8B9CA8", label: "Anchor",            hint: "⚓" },
+  moai:           { emoji: "🗿",  glow: "#8B9CA8", label: "Moai",              hint: "🗿" },
+  libertystatue:  { emoji: "🗽",  glow: "#3AA24A", label: "Liberty",           hint: "🗽" },
+  tokyotower:     { emoji: "🗼",  glow: "#E8462B", label: "Tokyo Tower",       hint: "🗼" },
+  jackolantern:   { emoji: "🎃",  glow: "#FF8A29", label: "Jack-o'-Lantern",   hint: "🎃" },
+  football:       { emoji: "🏈",  glow: "#8B4F2A", label: "Football",          hint: "🏈" },
+  soccer:         { emoji: "⚽",  glow: "#D8D8D8", label: "Soccer",            hint: "⚽" },
+  gamepad:        { emoji: "🎮",  glow: "#8B4FE8", label: "Game On",           hint: "🎮" },
+  violin:         { emoji: "🎻",  glow: "#8B5A2A", label: "Violin",            hint: "🎻" },
+  mic:            { emoji: "🎤",  glow: "#E8C468", label: "Mic Drop",          hint: "🎤" },
+  masks:          { emoji: "🎭",  glow: "#8B4FE8", label: "Drama",             hint: "🎭" },
+  shades:         { emoji: "🕶️", glow: "#3D3D3D", label: "Cool Shades",       hint: "🕶️" },
+  dna:            { emoji: "🧬",  glow: "#3AA24A", label: "DNA",               hint: "🧬" },
+  satellite:      { emoji: "📡",  glow: "#8B9CA8", label: "Satellite",         hint: "📡" },
+  ballpoint:      { emoji: "🖊️", glow: "#3D8FE0", label: "Ballpoint",         hint: "🖊️" },
+  pin:            { emoji: "📌",  glow: "#E8462B", label: "Pinned",            hint: "📌" },
+  pinlocation:    { emoji: "📍",  glow: "#E8462B", label: "Dropped Pin",       hint: "📍" },
+  cigarette:      { emoji: "🚬",  glow: "#D8D8D8", label: "Cigarette",         hint: "🚬" },
+  coffin:         { emoji: "⚰️", glow: "#5C4A1E", label: "Coffin",            hint: "⚰️" },
+  crossedswords:  { emoji: "⚔️", glow: "#C9A84C", label: "Crossed Blades",    hint: "⚔️" },
+  dagger:         { emoji: "🗡️", glow: "#C9A84C", label: "Dagger",            hint: "🗡️" },
+  bomb:           { emoji: "💣",  glow: "#1c1c1c", label: "Bomb",              hint: "💣" },
+  oldkey:         { emoji: "🗝️", glow: "#E8C468", label: "Old Key",           hint: "🗝️" },
+  shield:         { emoji: "🛡️", glow: "#3D8FE0", label: "Shield",            hint: "🛡️" },
+  exclaim:        { emoji: "❗",  glow: "#E8462B", label: "Alert",             hint: "❗" },
+  hotsprings:     { emoji: "♨️", glow: "#FF8A29", label: "Hot Springs",       hint: "♨️" },
+  radioactive:    { emoji: "☢️", glow: "#FFD65C", label: "Radioactive",       hint: "☢️" },
+  trident:        { emoji: "🔱",  glow: "#3D8FE0", label: "Trident",           hint: "🔱" },
+};
 const CURSOR_OPTIONS = [
   { id: "arrow",     label: "Arrow",            hint: "The default pointer" },
   { id: "sword",     label: "Valyrian Steel",   hint: "A longsword tip" },
@@ -1811,12 +1862,31 @@ const CURSOR_OPTIONS = [
   { id: "pen",       label: "Inkwell Pen",      hint: "A fountain nib" },
   { id: "rifle",     label: "Old Iron",         hint: "A battered rifle" },
   { id: "snake",     label: "Serpent's Eye",    hint: "A coiled viper" },
-  { id: "okhand",    label: "All Good",         hint: "👌" },
-  { id: "flip",      label: "Not Today",        hint: "🖕" },
-  { id: "luck",      label: "Fingers Crossed",  hint: "🤞" },
+  { id: "paperjet",  label: "Paper Jet",        hint: "A hand-folded plane" },
+  ...Object.entries(EMOJI_CURSORS).map(([id, c]) => ({ id, label: c.label, hint: c.hint })),
 ];
+/** Generic idle/hover/press art for anything in EMOJI_CURSORS: the emoji
+ *  itself, sitting in a color-matched glow ring that widens and brightens
+ *  through the click states so it still feels alive, not just a static
+ *  glyph swapped in for the system pointer. */
+function _emojiCursorSvg(emoji, glow, state) {
+  switch (state) {
+    case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'>
+      <circle cx='17' cy='17' r='14' fill='${glow}' opacity='0.16'/>
+      <text x='17' y='23' font-size='24' text-anchor='middle'>${emoji}</text>
+    </svg>`;
+    case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='38' height='38' viewBox='0 0 38 38'>
+      <circle cx='19' cy='19' r='17' fill='${glow}' opacity='0.3'/>
+      <text x='19' y='27' font-size='28' text-anchor='middle'>${emoji}</text>
+    </svg>`;
+    default: return `<svg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 30 30'>
+      <text x='15' y='21' font-size='20' text-anchor='middle'>${emoji}</text>
+    </svg>`;
+  }
+}
 function _cursorSvgMarkup(id, state) {
   state = state || "idle";
+  if (EMOJI_CURSORS[id]) return _emojiCursorSvg(EMOJI_CURSORS[id].emoji, EMOJI_CURSORS[id].glow, state);
   switch (id) {
     case "sword": switch (state) {
       case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'>
@@ -2111,44 +2181,23 @@ function _cursorSvgMarkup(id, state) {
         <circle cx='17' cy='11' r='1' fill='#C9A84C'/>
       </svg>`;
     }
-    case "okhand": switch (state) {
-      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'>
-        <circle cx='17' cy='17' r='14' fill='#E8C468' opacity='0.16'/>
-        <text x='17' y='23' font-size='24' text-anchor='middle'>👌</text>
+    case "paperjet": switch (state) {
+      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='38' height='30' viewBox='0 0 38 30'>
+        <path d='M2 14 L34 2 L20 16 L24 26 L18 20 L10 24 L12 16 Z' fill='#F0EAD8' stroke='#B7C4CC' stroke-width='1.1'/>
+        <path d='M2 14 L20 16 L18 20 Z' fill='#D8D2C0'/>
+        <path d='M34 2 L20 16 L24 26 Z' fill='#FFFDF4' opacity='0.6'/>
+        <path d='M6 12 L1 9 M8 15 L2 15' stroke='#B7C4CC' stroke-width='0.9' stroke-linecap='round' opacity='0.7'/>
       </svg>`;
-      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='38' height='38' viewBox='0 0 38 38'>
-        <circle cx='19' cy='19' r='17' fill='#E8C468' opacity='0.26'/>
-        <text x='19' y='27' font-size='28' text-anchor='middle'>👌</text>
+      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='42' height='32' viewBox='0 0 42 32'>
+        <path d='M3 15 L37 1 L21 17 L26 28 L19 21 L10 26 L13 17 Z' fill='#FFFDF4' stroke='#E8C468' stroke-width='1.3'/>
+        <path d='M3 15 L21 17 L19 21 Z' fill='#E4DCC4'/>
+        <path d='M37 1 L21 17 L26 28 Z' fill='#FFFFFF' opacity='0.7'/>
+        <path d='M8 12 L0 7 M9 16 L0 17 M11 12 L4 4' stroke='#E8C468' stroke-width='1' stroke-linecap='round' opacity='0.8'/>
       </svg>`;
-      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 30 30'>
-        <text x='15' y='21' font-size='20' text-anchor='middle'>👌</text>
-      </svg>`;
-    }
-    case "flip": switch (state) {
-      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'>
-        <circle cx='17' cy='17' r='14' fill='#B22222' opacity='0.14'/>
-        <text x='17' y='23' font-size='24' text-anchor='middle'>🖕</text>
-      </svg>`;
-      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='38' height='38' viewBox='0 0 38 38'>
-        <circle cx='19' cy='19' r='17' fill='#B22222' opacity='0.24'/>
-        <text x='19' y='27' font-size='28' text-anchor='middle'>🖕</text>
-      </svg>`;
-      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 30 30'>
-        <text x='15' y='21' font-size='20' text-anchor='middle'>🖕</text>
-      </svg>`;
-    }
-    case "luck": switch (state) {
-      case "hover": return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'>
-        <circle cx='17' cy='17' r='14' fill='#3AA24A' opacity='0.16'/>
-        <text x='17' y='23' font-size='24' text-anchor='middle'>🤞</text>
-      </svg>`;
-      case "press": return `<svg xmlns='http://www.w3.org/2000/svg' width='38' height='38' viewBox='0 0 38 38'>
-        <circle cx='19' cy='19' r='17' fill='#3AA24A' opacity='0.26'/>
-        <text x='19' y='27' font-size='28' text-anchor='middle'>🤞</text>
-        <circle cx='6' cy='6' r='1' fill='#FFD65C'/><circle cx='30' cy='8' r='0.8' fill='#FFD65C'/>
-      </svg>`;
-      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 30 30'>
-        <text x='15' y='21' font-size='20' text-anchor='middle'>🤞</text>
+      default: return `<svg xmlns='http://www.w3.org/2000/svg' width='34' height='28' viewBox='0 0 34 28'>
+        <path d='M2 13 L30 2 L18 15 L22 24 L16 18 L9 22 L11 15 Z' fill='#E4DCC4' stroke='#8B9CA8' stroke-width='0.9'/>
+        <path d='M2 13 L18 15 L16 18 Z' fill='#C9C2AC'/>
+        <path d='M30 2 L18 15 L22 24 Z' fill='#F0EAD8' opacity='0.6'/>
       </svg>`;
     }
     default: return null; // "arrow" — resets to the normal system pointer
@@ -2163,6 +2212,7 @@ function _cursorHotspot(id) {
     case "rifle": return "2 10";
     case "ironfist": return "17 16";
     case "potion": return "15 2";
+    case "paperjet": return "2 13";
     default: return "4 4";
   }
 }
@@ -2397,7 +2447,7 @@ global.VV = {
   generatedArt, hashStr, setArtStyle, getArtStyle, ART_STYLES, drawSkullIcon,
   resizeImageFileToDataUrl, extractRawPictureBlob, getEmbeddedArtForFile,
   createVolumeController, volumeIconMarkup, SHORTCUTS, renderShortcutList,
-  CURSOR_OPTIONS, applyCursor, getCursorStyle, setCursorStyle, initSharedCursor,
+  CURSOR_OPTIONS, EMOJI_CURSORS, applyCursor, getCursorStyle, setCursorStyle, initSharedCursor,
   initScrollTopWidget, watchForSilentReconnect,
 };
 

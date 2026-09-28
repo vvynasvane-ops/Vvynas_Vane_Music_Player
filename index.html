@@ -87,6 +87,9 @@
 
     <!-- Sidebar (tablet / laptop) -->
     <nav class="sidebar" id="sidebar">
+      <button class="sidebar-close-btn" id="sidebarCloseBtn" type="button" aria-label="Close menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
       <div class="brand" style="flex-direction:column;align-items:stretch;gap:0;">
         <canvas id="globeTitleCanvas"></canvas>
         <canvas id="heartTitleCanvas" class="hidden"></canvas>
@@ -159,14 +162,18 @@
         </button>
       </div>
     </nav>
+    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
 
     <!-- Main column -->
     <main class="main">
       <header class="topbar">
+        <button class="icon-btn mobile-menu-btn" id="mobileMenuBtn" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
         <h1 id="viewTitle">Library</h1>
         <div class="search-wrap">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-          <input type="text" id="searchInput" placeholder="Search songs, artists, albums…">
+          <input type="text" id="searchInput" placeholder="Search songs, artists, albums, playlists…">
         </div>
         <select class="sort-select" id="sortSelect">
           <option value="title">Title A–Z</option>
@@ -496,7 +503,7 @@
       <div class="section-label" style="margin-top:16px;">Album Art Style</div>
       <div class="art-style-grid" id="artStyleGrid"></div>
 
-      <div class="section-label" style="margin-top:16px;">🖱 Cursor</div>
+      <div class="section-label" style="margin-top:16px;">Cursor</div>
       <div class="art-style-grid" id="cursorGrid"></div>
 
       <div class="section-label" style="margin-top:16px;">Font (8 styles)</div>
